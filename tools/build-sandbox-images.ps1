@@ -2,6 +2,7 @@
 param(
     [string]$Distro = "Ubuntu-20.04",
     [switch]$UseMirror,
+    [Alias("IncludeAllMcp")]
     [switch]$IncludeBlenderMcp,
     [string]$CodexVersion = "0.153.4",
     [string]$NpmRegistry = "https://registry.npmmirror.com"
