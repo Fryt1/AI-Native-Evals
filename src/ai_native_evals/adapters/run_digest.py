@@ -305,3 +305,153 @@ def render_digest_markdown(digest: dict[str, Any]) -> str:
     lines.append(f"- manifest: `{digest['paths']['manifest']}`")
     lines.append(f"- evidence: `{digest['paths']['evidence']}`")
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Persistent digest files + history summary
+# ---------------------------------------------------------------------------
+def digest_cache_path(run_dir: str | Path) -> Path:
+    """Where a run's cached digest lives (next to its trace log)."""
+    return Path(run_dir).resolve() / "trace" / "digest.json"
+
+
+def write_digest_files(run_dir: str | Path, digest: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Persist digest.json + digest.md next to the run's trace log."""
+    run_dir = Path(run_dir).resolve()
+    digest = digest or digest_run(run_dir)
+    trace_dir = run_dir / "trace"
+    trace_dir.mkdir(parents=True, exist_ok=True)
+    (trace_dir / "digest.json").write_text(
+        json.dumps(digest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    (trace_dir / "digest.md").write_text(render_digest_markdown(digest), encoding="utf-8")
+    return digest
+
+
+def digest_run_or_cached(run_dir: str | Path) -> dict[str, Any]:
+    """Return a run digest, recomputing only when the container log is newer.
+
+    Computing a digest parses the full log; caching keeps ``run summary`` and
+    repeated inspections cheap while staying correct after a new run.
+    """
+    run_dir = Path(run_dir).resolve()
+    cache = digest_cache_path(run_dir)
+    log = run_dir / "trace" / "agent-container.log"
+    if cache.is_file():
+        try:
+            cached = json.loads(cache.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            cached = None
+        if isinstance(cached, dict):
+            if not log.is_file() or cache.stat().st_mtime >= log.stat().st_mtime:
+                return cached
+    digest = digest_run(run_dir)
+    try:
+        write_digest_files(run_dir, digest)
+    except DigestError:
+        pass  # cache is an optimisation; never let it hide the real result
+    return digest
+
+
+def summarize_runs(
+    runs_root: str | Path, *, include_digest: bool = True
+) -> list[dict[str, Any]]:
+    """Build one row per run directory under ``runs_root``."""
+    runs_root = Path(runs_root).resolve()
+    rows: list[dict[str, Any]] = []
+    if not runs_root.is_dir():
+        return rows
+    for run_dir in sorted(runs_root.iterdir()):
+        manifest_path = run_dir / "run-manifest.json"
+        if not manifest_path.is_file():
+            continue
+        try:
+            manifest = _load_json(manifest_path)
+        except DigestError:
+            continue
+        run = manifest.get("run", {})
+        runtime = manifest.get("runtime", {})
+        paths = manifest.get("paths", {})
+
+        verify = None
+        evidence_dir = Path(paths.get("evidence", run_dir / "evidence"))
+        verify_path = evidence_dir / "verification.json"
+        if verify_path.is_file():
+            try:
+                v = _load_json(verify_path)
+                verify = v.get("passed")
+            except DigestError:
+                verify = None
+
+        digest = None
+        if include_digest:
+            try:
+                digest = digest_run_or_cached(run_dir)
+            except DigestError:
+                digest = None
+
+        stats = (digest or {}).get("stats", {})
+        struggle = (digest or {}).get("struggle", {})
+        top_fail = ""
+        churn = struggle.get("tool_churn") or []
+        if churn:
+            tool, count = churn[0]
+            top_fail = f"{tool} x{count}"
+
+        finished = (
+            runtime.get("stopped_at")
+            or runtime.get("completed_at")
+            or run.get("created_at")
+            or ""
+        )
+        row: dict[str, Any] = {
+            "run": str(run.get("run_id", run_dir.name)),
+            "finished": finished,
+            "task": str(run.get("task_id", "")),
+            "agent": str(run.get("agent", "")),
+            "model": str(run.get("model", "")),
+            "status": str(manifest.get("status", "")),
+            "exit": runtime.get("agent_exit_code"),
+            "verify": verify,
+            "mcp_calls": stats.get("mcp_calls_total"),
+            "mcp_success_rate": stats.get("mcp_success_rate"),
+            "shell_commands": stats.get("shell_commands_total"),
+            "doc_share": (digest or {}).get("effort_profile", {}).get("doc_share"),
+            "top_failure": top_fail,
+            "run_dir": str(run_dir),
+        }
+        rows.append(row)
+    return rows
+
+
+def render_summary_markdown(rows: list[dict[str, Any]]) -> str:
+    """Render the history table as compact Markdown."""
+    header = (
+        "| run | finished | task | agent | status | exit | verify | mcp ok% | shell | top failure |"
+    )
+    lines = [header, "|---|---|---|---|---|---|---|---|---|---|"]
+    for r in rows:
+        # Shorten the per-run uuid suffix but keep the task prefix readable.
+        name = r["run"]
+        parts = name.rsplit("-", 1)
+        if len(parts) == 2 and len(parts[1]) <= 12 and parts[1].isalnum():
+            name = parts[0] + "·" + parts[1]
+        verify = {True: "PASS", False: "FAIL", None: "-"}.get(r["verify"], "-")
+        rate = r["mcp_success_rate"]
+        rate_txt = f"{rate * 100:.0f}%" if rate is not None else "-"
+        finished = str(r["finished"])[:16].replace("T", " ")
+        lines.append(
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |".format(
+                name,
+                finished,
+                r["task"],
+                r["agent"],
+                r["status"],
+                r["exit"] if r["exit"] is not None else "-",
+                verify,
+                rate_txt,
+                r["shell_commands"] if r["shell_commands"] is not None else "-",
+                r["top_failure"] or "-",
+            )
+        )
+    return "\n".join(lines)

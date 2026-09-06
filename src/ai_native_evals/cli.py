@@ -184,12 +184,16 @@ def _verify(args: argparse.Namespace) -> int:
 
 
 def _digest(args: argparse.Namespace) -> int:
-    """Render a per-run digest: what the agent did, how much it struggled."""
-    from .adapters.run_digest import DigestError, digest_run, render_digest_markdown
+    """Render a per-run digest and persist digest.json + digest.md in trace/."""
+    from .adapters.run_digest import (
+        DigestError,
+        render_digest_markdown,
+        write_digest_files,
+    )
 
     run_dir = _run_dir_from_arg(_repo_root(), args.run_id)
     try:
-        digest = digest_run(run_dir)
+        digest = write_digest_files(run_dir)
     except DigestError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -197,6 +201,21 @@ def _digest(args: argparse.Namespace) -> int:
         print(json.dumps(digest, ensure_ascii=False, indent=2))
     else:
         print(render_digest_markdown(digest))
+    return 0
+
+
+
+
+def _summary(args: argparse.Namespace) -> int:
+    """Render a history table across all runs (one row per run)."""
+    from .adapters.run_digest import render_summary_markdown, summarize_runs
+
+    runs_root = _repo_root() / ".." / "EvalRuns"
+    rows = summarize_runs(runs_root)
+    if args.json:
+        print(json.dumps(rows, ensure_ascii=False, indent=2))
+    else:
+        print(render_summary_markdown(rows))
     return 0
 
 
@@ -236,6 +255,10 @@ def main() -> int:
     logs_parser.add_argument("run_id")
     logs_parser.add_argument("--tail", type=int, default=200)
 
+    summary_parser = run_subparsers.add_parser(
+        "summary", help="render a history table across all runs"
+    )
+    summary_parser.add_argument("--json", action="store_true", help="emit rows as JSON")
     digest_parser = run_subparsers.add_parser(
         "digest", help="render a per-run digest: what the agent did and how it struggled"
     )
@@ -271,6 +294,8 @@ def main() -> int:
             return _wait(args)
         if args.run_command == "logs":
             return _logs(args)
+        if args.run_command == "summary":
+            return _summary(args)
         if args.run_command == "digest":
             return _digest(args)
         if args.run_command == "verify":
