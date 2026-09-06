@@ -1,0 +1,24 @@
+ARG NODE_BASE_IMAGE=node:22-bookworm
+FROM ${NODE_BASE_IMAGE}
+
+ARG CODEX_VERSION=0.153.4
+ARG NPM_REGISTRY=https://registry.npmjs.org
+
+WORKDIR /workspace
+ENV CODEX_HOME=/opt/codex-home
+ENV EVAL_MODEL=deepseek/deepseek-v4-flash
+ENV EVAL_WIRE_API=responses
+ENV EVAL_GATEWAY_URL=http://llm-gateway:8080/v1
+ENV EVAL_REASONING_EFFORT=high
+ENV EVAL_ENABLE_BLENDER_MCP=0
+ENV EVAL_OUTER_SANDBOX=docker
+
+RUN npm install --global --registry=${NPM_REGISTRY} @openai/codex@${CODEX_VERSION} \
+    && mkdir -p /opt/codex-home /workspace \
+    && chown -R node:node /opt/codex-home /workspace
+
+COPY docker/codex-agent/entrypoint.sh /usr/local/bin/ai-native-codex-entrypoint
+RUN chmod +x /usr/local/bin/ai-native-codex-entrypoint
+
+USER node
+ENTRYPOINT ["/usr/local/bin/ai-native-codex-entrypoint"]

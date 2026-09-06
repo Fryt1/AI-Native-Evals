@@ -1,0 +1,13 @@
+# The agent image only needs the pinned Blender MCP archive and its launch files.
+*
+!docker/
+!docker/codex-agent/
+!docker/codex-agent/Dockerfile
+!docker/codex-agent/Dockerfile.sandbox
+!docker/codex-agent/entrypoint.sh
+!gateway/
+!gateway/**
+!vendor/
+!vendor/blender-mcp/
+!vendor/blender-mcp/mcp.tar.gz
+!vendor/blender-mcp/SOURCE.json

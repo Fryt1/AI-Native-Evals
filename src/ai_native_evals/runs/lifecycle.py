@@ -7,7 +7,6 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from .resolver import resolve_run
 from .snapshots import snapshot_repository
 from .spec import RunSpec
 
@@ -16,7 +15,13 @@ class RunLifecycleError(RuntimeError):
     """Raised for invalid run lifecycle operations."""
 
 
-def prepare_run(repo_root: Path, spec: RunSpec, *, game_engine_ref: str | None = None, dsh_ref: str | None = None) -> Path:
+def prepare_run(
+    repo_root: Path,
+    spec: RunSpec,
+    *,
+    game_engine_ref: str | None = None,
+    dsh_ref: str | None = None,
+) -> Path:
     """Create a run workspace and write its resolved manifest."""
     run_dir = spec.run_dir.resolve()
     if run_dir.exists():
@@ -24,7 +29,12 @@ def prepare_run(repo_root: Path, spec: RunSpec, *, game_engine_ref: str | None =
     run_dir.mkdir(parents=True)
     project_dir = run_dir / "project" / "game-engine"
     dsh_dir = run_dir / "project" / "ai-native-dsh"
-    for child in (run_dir / "workspace", run_dir / "artifacts", run_dir / "evidence", run_dir / "trace"):
+    for child in (
+        run_dir / "workspace",
+        run_dir / "artifacts",
+        run_dir / "evidence",
+        run_dir / "trace",
+    ):
         child.mkdir(parents=True)
 
     game_snapshot = snapshot_repository(spec.game_engine_root, project_dir, game_engine_ref)
@@ -41,7 +51,7 @@ def prepare_run(repo_root: Path, spec: RunSpec, *, game_engine_ref: str | None =
         },
         "paths": {
             "project": str(project_dir),
-            "dsh": str(dsh_dir),
+            "dsh": str(dsh_dir) if dsh_snapshot else None,
             "workspace": str(run_dir / "workspace"),
             "artifacts": str(run_dir / "artifacts"),
             "evidence": str(run_dir / "evidence"),
@@ -60,8 +70,21 @@ def load_manifest(path: Path) -> dict[str, Any]:
 
 def set_status(run_dir: Path, status: str) -> dict[str, Any]:
     """Update a run status without changing resolved configuration."""
+    return update_manifest(run_dir, status=status)
+
+
+def update_manifest(
+    run_dir: Path,
+    *,
+    status: str | None = None,
+    runtime: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Update lifecycle fields while preserving the immutable run metadata."""
     manifest = load_manifest(run_dir)
-    manifest["status"] = status
+    if status is not None:
+        manifest["status"] = status
+    if runtime is not None:
+        manifest["runtime"] = runtime
     _write_manifest(run_dir, manifest)
     return manifest
 

@@ -85,15 +85,50 @@ uv run inspect eval src/ai_native_evals/tasks/codex_file_smoke.py@codex_file_smo
 
 The run writes `codex-events.jsonl`, `codex-stderr.log`, `codex-last-message.txt`, and `run-manifest.json` under `runs/codex-file-smoke/<run-id>/`. The scorer checks the actual `hello.txt` bytes; it does not trust the final Agent message. Codex lifecycle, command execution, tool results, Agent messages, and file-change events are also projected into the Inspect Messages/Transcript view.
 
-## Manual run lifecycle
+## Build the sandbox images
 
-The CLI keeps configuration small and snapshots repositories before an Agent starts:
+Build the gateway and Codex Agent images with one command. `-UseMirror` uses
+Docker's reachable registry mirror when direct Docker Hub authentication is
+unavailable on the current WSL network:
 
 ```powershell
+pwsh -File .\tools\build-sandbox-images.ps1 -UseMirror
+```
+
+The build pins the Codex version and the official Blender MCP source commit.
+The DSH image can use the same runtime contract and is selected by changing
+`agents.dsh.image` in `config/eval.yaml`.
+
+## Manual run lifecycle
+
+The CLI keeps configuration small, snapshots repositories before an Agent
+starts, and owns the Docker sandbox lifecycle:
+
+```powershell
+# One-shot: snapshot → Docker sandbox → Agent → wait → cleanup resources
+uv run ai-native-evals run execute blender-cube --agent codex
+
+# Or control each lifecycle phase manually
 uv run ai-native-evals run prepare blender-cube --agent codex
+uv run ai-native-evals run start <run-id>
+uv run ai-native-evals run logs <run-id>
+uv run ai-native-evals run wait <run-id>
 uv run ai-native-evals run status <run-id>
 uv run ai-native-evals run cleanup <run-id>
 ```
+
+`run start` uses the WSL-backed Docker CLI, creates a per-run network, starts
+an isolated LLM Gateway and Agent container, and mounts the prepared snapshot
+read-write at `/workspace/game-engine`. The Agent container has an isolated
+`CODEX_HOME`, no host `~/.codex` mount, a read-only image root, dropped Linux
+capabilities, no-new-privileges, memory/PID limits, and per-run writable
+workspace/evidence/trace mounts. `run wait` persists the container log and
+releases the network and containers.
+
+The Agent image includes the official Blender MCP Server. That MCP Server runs
+in Docker; the Blender Add-on bridge remains in the host Blender process and
+is reached through `BLENDER_MCP_HOST:BLENDER_MCP_PORT`. This keeps the Agent
+sandboxed without moving Blender/UE5 into the container.
 
 Defaults live in `config/eval.yaml`; credentials remain in the ignored
 `config/.env.local`. The prepared run records immutable Game Engine and

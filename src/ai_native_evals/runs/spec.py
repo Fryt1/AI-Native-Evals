@@ -14,6 +14,7 @@ class RunSpec:
 
     run_id: str
     task_id: str
+    task_prompt: str
     agent: str
     agent_image: str
     model_profile: str
@@ -21,6 +22,11 @@ class RunSpec:
     protocol: str
     reasoning_effort: str | None
     mcp_profile: str
+    mcp_host: str
+    mcp_port: int
+    mcp_blender: bool
+    mcp_ue5: bool
+    sandbox: dict[str, Any]
     snapshot_mode: str
     game_engine_root: Path
     dsh_root: Path

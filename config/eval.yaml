@@ -6,6 +6,14 @@ paths:
   dsh: ../AI-Native-DSH
   runs_root: ../EvalRuns
 
+sandbox:
+  backend: wsl-docker
+  distro: Ubuntu-20.04
+  gateway_image: ai-native-llm-gateway:local
+  read_only_root: true
+  memory: 8g
+  pids_limit: 512
+
 defaults:
   agent: codex
   model_profile: sub2api-deepseek
@@ -27,7 +35,24 @@ agents:
 mcp_profiles:
   blender-host:
     blender: true
+    host: host.docker.internal
+    port: 9876
     ue5: false
   ue5-host:
     blender: false
+    host: host.docker.internal
+    port: 9876
     ue5: true
+
+tasks:
+  blender-cube:
+    prompt: >-
+      Create a small cube in the currently running Blender instance through the
+      configured Blender MCP tools. Save a verification artifact under
+      /workspace/evidence/blender-cube.json, and verify the cube exists before
+      reporting completion. Do not use shell scripts or a custom socket client
+      to control Blender.
+  codex-file-smoke:
+    prompt: >-
+      Create /workspace/evidence/hello.txt with exactly the text
+      ai-native-codex-ok, then read it back and verify the contents.

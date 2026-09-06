@@ -1,0 +1,7 @@
+{
+  "upstream": "https://projects.blender.org/lab/blender_mcp.git",
+  "commit": "4309a39646e644261624bfcd2bca669b343b7621",
+  "package": "mcp",
+  "license": "GPL-3.0-or-later",
+  "purpose": "Official Blender Lab MCP Server source used by the sandbox image"
+}

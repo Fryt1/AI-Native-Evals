@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -72,7 +71,11 @@ def _copy_tree(source: Path, destination: Path) -> None:
             continue
         target = destination / item.name
         if item.is_dir():
-            shutil.copytree(item, target, ignore=shutil.ignore_patterns(*_EXCLUDED_DIRS, *_EXCLUDED_FILES))
+            shutil.copytree(
+                item,
+                target,
+                ignore=shutil.ignore_patterns(*_EXCLUDED_DIRS, *_EXCLUDED_FILES),
+            )
         else:
             shutil.copy2(item, target)
 
