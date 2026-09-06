@@ -181,6 +181,25 @@ def _verify(args: argparse.Namespace) -> int:
     return 0 if passed else 1
 
 
+
+
+def _digest(args: argparse.Namespace) -> int:
+    """Render a per-run digest: what the agent did, how much it struggled."""
+    from .adapters.run_digest import DigestError, digest_run, render_digest_markdown
+
+    run_dir = _run_dir_from_arg(_repo_root(), args.run_id)
+    try:
+        digest = digest_run(run_dir)
+    except DigestError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps(digest, ensure_ascii=False, indent=2))
+    else:
+        print(render_digest_markdown(digest))
+    return 0
+
+
 def main() -> int:
     """Run diagnostics or manual evaluation lifecycle commands."""
     parser = argparse.ArgumentParser(description="AI-Native Agent evaluation controls")
@@ -217,6 +236,11 @@ def main() -> int:
     logs_parser.add_argument("run_id")
     logs_parser.add_argument("--tail", type=int, default=200)
 
+    digest_parser = run_subparsers.add_parser(
+        "digest", help="render a per-run digest: what the agent did and how it struggled"
+    )
+    digest_parser.add_argument("run_id")
+    digest_parser.add_argument("--json", action="store_true", help="emit raw digest JSON")
     verify_parser = run_subparsers.add_parser(
         "verify", help="run independent host read-back verification against a finished run"
     )
@@ -247,6 +271,8 @@ def main() -> int:
             return _wait(args)
         if args.run_command == "logs":
             return _logs(args)
+        if args.run_command == "digest":
+            return _digest(args)
         if args.run_command == "verify":
             return _verify(args)
         if args.run_command == "stop":
