@@ -23,6 +23,7 @@ function Invoke-Docker {
 
 $GatewayArgs = @(
     "build",
+    "--pull=false",
     "-f", "$WslRoot/gateway/Dockerfile",
     "-t", "ai-native-llm-gateway:local"
 )
@@ -38,6 +39,7 @@ $AgentTag = if ($IncludeBlenderMcp) {
 }
 $AgentArgs = @(
     "build",
+    "--pull=false",
     "-f", $AgentDockerfile,
     "--build-arg", "CODEX_VERSION=$CodexVersion",
     "--build-arg", "NODE_BASE_IMAGE=ai-native-llm-gateway:local",
@@ -61,7 +63,10 @@ if ($LASTEXITCODE -eq 0) {
 if (-not $gatewayExists) {
     if ($UseMirror) {
         $Mirror = "mirror.gcr.io/library"
-        $GatewayArgs += @("--build-arg", "NODE_BASE_IMAGE=$Mirror/node:22-slim")
+        $GatewayArgs += @(
+            "--build-arg",
+            "NODE_BASE_IMAGE=$Mirror/node:22-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5"
+        )
     }
     Write-Host "Building gateway image..."
     Invoke-Docker ($GatewayArgs + $WslRoot)
@@ -73,7 +78,7 @@ if ($UseMirror) {
     $AgentArgs += @("--build-arg", "NPM_REGISTRY=$NpmRegistry")
     if ($IncludeBlenderMcp) {
         $Mirror = "mirror.gcr.io/library"
-        $AgentArgs += "--build-arg", "PYTHON_BASE_IMAGE=$Mirror/python:3.12-slim"
+        $AgentArgs += "--build-arg", "PYTHON_BASE_IMAGE=$Mirror/python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea"
     }
 }
 
