@@ -55,7 +55,7 @@ uv run inspect eval src/ai_native_evals/tasks/smoke.py@smoke --model mockllm/mod
 uv run inspect eval --help
 ```
 
-当前 smoke task 不调用真实模型，只验证 Inspect Task、Solver、Scorer 三个接口能够组合运行。Codex、DSH 和真实 Blender/UE5 环境会在后续提交中接入。
+当前 `smoke` task 不调用真实模型，只验证 Inspect Task、Solver、Scorer 三个接口能够组合运行。`codex_file_smoke` 已接入本机 Codex CLI：它在独立 `run_dir` 创建 `hello.txt`，然后由文件状态 Scorer 验收。DSH 和真实 Blender/UE5 环境会在后续提交中接入。
 
 ## 评测原则
 
@@ -73,3 +73,14 @@ uv run inspect eval --help
 - 自动调用 UE5/Blender 的隐藏调度器
 - 复制 Game Engine 的 Stage 验收逻辑
 - 只依赖自然语言或 LLM-as-Judge 的主评分
+
+
+## First real Agent smoke
+
+Run the real Codex smoke task from the repository root:
+
+```powershell
+uv run inspect eval src/ai_native_evals/tasks/codex_file_smoke.py@codex_file_smoke --model mockllm/model
+```
+
+The run writes `codex-events.jsonl`, `codex-stderr.log`, `codex-last-message.txt`, and `run-manifest.json` under `runs/codex-file-smoke/<run-id>/`. The scorer checks the actual `hello.txt` bytes; it does not trust the final Agent message.

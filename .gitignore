@@ -5,6 +5,7 @@ __pycache__/
 .ruff_cache/
 .inspect/
 logs/
+runs/
 reports/*.json
 reports/*.jsonl
 !reports/.gitkeep

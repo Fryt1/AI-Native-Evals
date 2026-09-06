@@ -1,10 +1,13 @@
-"""Stable data contracts shared by adapters and scorers."""
+"""Stable contracts for external Agent adapters and domain scorers."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from pathlib import Path
+from typing import Any, Literal
+
+AgentRunStatus = Literal["completed", "failed", "timed_out", "cancelled"]
 
 _ALLOWED_STATUSES = frozenset(
     {
@@ -16,6 +19,65 @@ _ALLOWED_STATUSES = frozenset(
         "unknown",
     }
 )
+
+
+@dataclass(frozen=True, slots=True)
+class AgentLaunchSpec:
+    """Inputs shared by external Agent adapters."""
+
+    agent_id: str
+    run_dir: Path
+    task_text: str
+    task_id: str = ""
+    timeout_seconds: int = 1800
+    model: str | None = None
+    environment: Mapping[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class AgentRunResult:
+    """Machine-readable outcome of one external Agent process run."""
+
+    agent_id: str
+    task_id: str
+    run_dir: Path
+    status: AgentRunStatus
+    exit_code: int | None
+    started_at: str
+    finished_at: str
+    events_path: Path
+    stderr_path: Path
+    last_message_path: Path
+    manifest_path: Path
+    model: str | None = None
+    failure_message: str | None = None
+
+    @property
+    def completed(self) -> bool:
+        """Whether the external process exited successfully."""
+        return self.status == "completed"
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the JSON representation persisted in the run directory."""
+        return {
+            "agent_id": self.agent_id,
+            "task_id": self.task_id,
+            "run_dir": str(self.run_dir),
+            "status": self.status,
+            "exit_code": self.exit_code,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+            "events_path": str(self.events_path),
+            "stderr_path": str(self.stderr_path),
+            "last_message_path": str(self.last_message_path),
+            "manifest_path": str(self.manifest_path),
+            "model": self.model,
+            "failure_message": self.failure_message,
+        }
+
+
+class AgentAdapterNotImplemented(RuntimeError):
+    """Raised by an Agent adapter seam that has not been wired yet."""
 
 
 @dataclass(frozen=True, slots=True)

@@ -15,9 +15,10 @@ Inspect Task
     └── Scorer        AI-Native-Game-Engine verifier adapter
 ```
 
-The first package slice contains a model-free `smoke` task. It proves that the
-Inspect Task → Solver → Scorer composition works before external Agent and DCC
-processes are introduced.
+The first package slice contains a model-free `smoke` task and a real
+`codex_file_smoke` task. The former proves the Inspect Task → Solver → Scorer
+composition; the latter launches the local Codex CLI in an isolated directory
+and verifies a file result before any DCC process is introduced.
 
 ## Ownership
 
@@ -32,8 +33,10 @@ processes are introduced.
 
 ### Codex
 
-Launch the selected Codex CLI or protocol client in an isolated `run_dir` and
-capture its transcript and machine-readable run manifest.
+`CodexAdapter` launches the selected Codex CLI in an isolated `run_dir` with
+non-interactive JSON events, then captures its transcript, stderr, last message,
+and machine-readable run manifest. `codex_file_smoke` is the first end-to-end
+proof of this path.
 
 ### DSH
 
