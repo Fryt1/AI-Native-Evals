@@ -99,6 +99,15 @@ The build pins the Codex version and the official Blender MCP source commit.
 The DSH image can use the same runtime contract and is selected by changing
 `agents.dsh.image` in `config/eval.yaml`.
 
+Build the full-MCP image (Blender + ComfyUI stdio servers inside the image):
+
+```powershell
+pwsh -File .\tools\build-sandbox-images.ps1 -UseMirror -IncludeAllMcp
+```
+
+The local Codex package cache (`cache/codex`) is downloaded once by
+`tools/prepare-codex-cache.mjs`; it is never committed.
+
 ## Manual run lifecycle
 
 The CLI keeps configuration small, snapshots repositories before an Agent
