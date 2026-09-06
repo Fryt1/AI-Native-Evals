@@ -70,5 +70,3 @@ def test_prepare_run_writes_snapshot_and_manifest(tmp_path: Path) -> None:
     assert not (run_dir / "project" / "game-engine" / ".venv").exists()
     assert (run_dir / "workspace").is_dir()
     assert manifest["snapshots"]["game_engine"]["dirty"] is False
-
-
