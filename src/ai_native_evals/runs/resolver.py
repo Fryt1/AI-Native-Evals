@@ -63,6 +63,9 @@ def resolve_run(
         _string(defaults, "mcp_profile", "default"),
     )
     snapshot_mode = _string(defaults, "snapshot_mode", "working_tree")
+    verify_config = task_config.get("verify") or {}
+    if not isinstance(verify_config, dict):
+        raise EvalConfigError("task verify block must be a mapping")
 
     agent_config = _mapping(agents, agent_name)
     profile = _mapping(profiles, profile_name)
@@ -102,6 +105,7 @@ def resolve_run(
         mcp_blender="blender" in mcp_servers,
         mcp_ue5="unreal-mcp" in mcp_servers,
         mcp_servers=mcp_servers,
+        verify=verify_config,
         sandbox=sandbox_config,
         snapshot_mode=snapshot_mode,
         game_engine_root=game_engine_root,

@@ -130,6 +130,57 @@ def _cleanup(args: argparse.Namespace) -> int:
     return 0
 
 
+
+
+
+def _verify(args: argparse.Namespace) -> int:
+    """Run independent host read-back verification against a finished run dir.
+
+    Expectations come from the same task manifest that produced the run, so the
+    verify gate can never drift from the task definition. Verification only
+    ever happens on the host, never through the container-facing mcp_host.
+    """
+    from .scorers.multi_dcc_host_verifier import verify_host_state
+
+    manifest = load_manifest(_run_dir_from_arg(_repo_root(), args.run_id))
+    run = manifest["run"]
+    verify_config = run.get("verify") or {}
+    if not verify_config:
+        print(
+            json.dumps(
+                {
+                    "passed": False,
+                    "error": "run manifest has no task verify expectations; cannot verify",
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 1
+    evidence_dir = Path(manifest["paths"]["evidence"])
+
+    blender_expectations = verify_config.get("blender_objects") or []
+    ue5_expectations = verify_config.get("ue5") or {}
+    scene_name = verify_config.get("blender_scene", "roundtrip.blend")
+
+    # The scorer keys off its own hardcoded filename; hand it an explicit file
+    # expectation through a temp-normalized evidence dir is not clean, so we
+    # copy the scene expectation into an env var consumed by verify_host_state.
+    import os as _os
+
+    _os.environ["AI_NATIVE_EVALS_BLEND_SCENE_NAME"] = str(scene_name)
+
+    passed, findings = verify_host_state(
+        evidence_dir=evidence_dir,
+        expected_blend_objects=blender_expectations,
+        expected_ue5=ue5_expectations,
+        mcp_url="http://127.0.0.1:8000/mcp",
+        skip_if_absent=False,
+    )
+    print(json.dumps({"passed": passed, "findings": findings}, ensure_ascii=False, indent=2))
+    return 0 if passed else 1
+
+
 def main() -> int:
     """Run diagnostics or manual evaluation lifecycle commands."""
     parser = argparse.ArgumentParser(description="AI-Native Agent evaluation controls")
@@ -166,6 +217,10 @@ def main() -> int:
     logs_parser.add_argument("run_id")
     logs_parser.add_argument("--tail", type=int, default=200)
 
+    verify_parser = run_subparsers.add_parser(
+        "verify", help="run independent host read-back verification against a finished run"
+    )
+    verify_parser.add_argument("run_id")
     stop_parser = run_subparsers.add_parser("stop", help="stop the Docker Agent and gateway")
     stop_parser.add_argument("run_id")
 
@@ -192,6 +247,8 @@ def main() -> int:
             return _wait(args)
         if args.run_command == "logs":
             return _logs(args)
+        if args.run_command == "verify":
+            return _verify(args)
         if args.run_command == "stop":
             return _stop(args)
         if args.run_command == "cleanup":

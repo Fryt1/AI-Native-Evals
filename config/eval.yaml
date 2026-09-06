@@ -61,6 +61,22 @@ mcp_profiles:
         startup_timeout_sec: 30
         tool_timeout_sec: 900
 
+  blender-ue5-host:
+    host: host.docker.internal
+    port: 9876
+    servers:
+      blender:
+        transport: stdio
+        command: /opt/blender-mcp/bin/blender-mcp
+        env:
+          BLENDER_MCP_HOST: ${MCP_HOST}
+          BLENDER_MCP_PORT: ${MCP_PORT}
+      unreal-mcp:
+        transport: streamable-http
+        url: http://${MCP_HOST}:8000/mcp
+        startup_timeout_sec: 30
+        tool_timeout_sec: 900
+
   comfyui-host:
     host: host.docker.internal
     port: 8188
@@ -114,6 +130,62 @@ mcp_profiles:
         tool_timeout_sec: 300
 
 tasks:
+  roundtrip-blender-ue5-v2:
+    agent: codex-dcc
+    mcp_profile: blender-ue5-host
+    prompt: >-
+      Work across two DCCs through MCP and leave verifiable state on the host.
+      Blender (server 'blender'): create an object named RoundtripV2Cube (a unit cube)
+      at (0,0,2). Then save the current Blender scene to a file named
+      roundtrip-v2.blend inside the evidence directory (the Windows host path that is
+      mounted into this container at /workspace/evidence, usually
+      D:\work\AI-Native\EvalRuns\<run-id>\evidence) and call save/export so the
+      file exists.
+      UE5 (server 'unreal-mcp'): in the current level create a StaticMeshActor
+      named RoundtripV2Actor at (0,0,200), and add a cube StaticMeshComponent named
+      RoundtripV2Mesh using the engine's built-in cube mesh.
+      Finally write /workspace/evidence/roundtrip-v2-summary.json containing both the
+      saved blender file path and the actor ref from UE5, then report done.
+    verify:
+      blender_scene: roundtrip-v2.blend
+      blender_objects:
+        - name: RoundtripV2Cube
+          type: MESH
+          location: [0.0, 0.0, 2.0]
+      ue5:
+        actor_label: RoundtripV2Actor
+        location: {x: 0.0, y: 0.0, z: 200.0}
+        expected_components: [StaticMeshComponent0, RoundtripV2Mesh]
+        mesh_ref: /Engine/BasicShapes/Cube.Cube
+        mesh_component: RoundtripV2Mesh
+  roundtrip-blender-ue5:
+    agent: codex-dcc
+    mcp_profile: blender-ue5-host
+    prompt: >-
+      Work across two DCCs through MCP and leave verifiable state on the host.
+      Blender (server 'blender'): create an object named RoundtripCube (a unit cube)
+      at (0,0,1). Then save the current Blender scene to a file named
+      roundtrip.blend inside the evidence directory (the Windows host path that is
+      mounted into this container at /workspace/evidence, usually
+      D:\work\AI-Native\EvalRuns\<run-id>\evidence) and call save/export so the
+      file exists.
+      UE5 (server 'unreal-mcp'): in the current level create a StaticMeshActor
+      named RoundtripActor at (0,0,100), and add a cube StaticMeshComponent named
+      RoundtripMesh using the engine's built-in cube mesh.
+      Finally write /workspace/evidence/roundtrip-summary.json containing both the
+      saved blender file path and the actor ref from UE5, then report done.
+    verify:
+      blender_scene: roundtrip.blend
+      blender_objects:
+        - name: RoundtripCube
+          type: MESH
+          location: [0.0, 0.0, 1.0]
+      ue5:
+        actor_label: RoundtripActor
+        location: {x: 0.0, y: 0.0, z: 100.0}
+        expected_components: [StaticMeshComponent0, RoundtripMesh]
+        mesh_ref: /Engine/BasicShapes/Cube.Cube
+        mesh_component: RoundtripMesh
   blender-cube:
     agent: codex-dcc
     mcp_profile: blender-host
