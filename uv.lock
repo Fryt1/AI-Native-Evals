@@ -24,6 +24,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "inspect-ai" },
+    { name = "pyyaml" },
 ]
 
 [package.dev-dependencies]
@@ -33,7 +34,10 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "inspect-ai", specifier = "==0.3.263" }]
+requires-dist = [
+    { name = "inspect-ai", specifier = "==0.3.263" },
+    { name = "pyyaml", specifier = ">=6.0" },
+]
 
 [package.metadata.requires-dev]
 dev = [

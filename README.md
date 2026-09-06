@@ -84,3 +84,17 @@ uv run inspect eval src/ai_native_evals/tasks/codex_file_smoke.py@codex_file_smo
 ```
 
 The run writes `codex-events.jsonl`, `codex-stderr.log`, `codex-last-message.txt`, and `run-manifest.json` under `runs/codex-file-smoke/<run-id>/`. The scorer checks the actual `hello.txt` bytes; it does not trust the final Agent message. Codex lifecycle, command execution, tool results, Agent messages, and file-change events are also projected into the Inspect Messages/Transcript view.
+
+## Manual run lifecycle
+
+The CLI keeps configuration small and snapshots repositories before an Agent starts:
+
+```powershell
+uv run ai-native-evals run prepare blender-cube --agent codex
+uv run ai-native-evals run status <run-id>
+uv run ai-native-evals run cleanup <run-id>
+```
+
+Defaults live in `config/eval.yaml`; credentials remain in the ignored
+`config/.env.local`. The prepared run records immutable Game Engine and
+AI-Native-DSH snapshots in `EvalRuns/<run-id>/`.

@@ -1,0 +1,33 @@
+version: 1
+
+# Paths are resolved relative to the repository root, not this file.
+paths:
+  game_engine: ../game-engine
+  dsh: ../AI-Native-DSH
+  runs_root: ../EvalRuns
+
+defaults:
+  agent: codex
+  model_profile: sub2api-deepseek
+  mcp_profile: blender-host
+  snapshot_mode: working_tree
+
+model_profiles:
+  sub2api-deepseek:
+    model: deepseek/deepseek-v4-flash
+    protocol: responses
+    reasoning_effort: high
+
+agents:
+  codex:
+    image: ai-native-codex-agent:local
+  dsh:
+    image: ai-native-dsh-agent:local
+
+mcp_profiles:
+  blender-host:
+    blender: true
+    ue5: false
+  ue5-host:
+    blender: false
+    ue5: true
