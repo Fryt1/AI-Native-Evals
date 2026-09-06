@@ -22,7 +22,7 @@ container-local `CODEX_HOME/config.toml`; it never reads or modifies the host
 Codex configuration. DSH receives the same descriptors in ACP's
 `mcpServers` shape at `/run-config/dsh-mcp-servers.json`.
 
-The Blender and ComfyUI stdio servers run inside the Agent image. Their target
+The Blender and ComfyUI stdio servers run inside separate Python virtual environments in the Agent image (Blender MCP uses MCP v1; Comfy MCP uses MCP v2). Their target
 applications remain on the host and are reached through `host.docker.internal`.
 The UE5 and Hugging Face entries are standard streamable HTTP MCP connections.
 No custom Agent-side socket client or protocol adapter is used.
