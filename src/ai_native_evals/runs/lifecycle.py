@@ -7,6 +7,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from ..mcp import project_dsh_mcp_servers
 from .snapshots import snapshot_repository
 from .spec import RunSpec
 
@@ -29,11 +30,13 @@ def prepare_run(
     run_dir.mkdir(parents=True)
     project_dir = run_dir / "project" / "game-engine"
     dsh_dir = run_dir / "project" / "ai-native-dsh"
+    agent_config_dir = run_dir / "agent-config"
     for child in (
         run_dir / "workspace",
         run_dir / "artifacts",
         run_dir / "evidence",
         run_dir / "trace",
+        agent_config_dir,
     ):
         child.mkdir(parents=True)
 
@@ -41,6 +44,18 @@ def prepare_run(
     dsh_snapshot = None
     if spec.dsh_root.is_dir():
         dsh_snapshot = snapshot_repository(spec.dsh_root, dsh_dir, dsh_ref)
+
+    mcp_config_path = agent_config_dir / "mcp-servers.json"
+    mcp_config_path.write_text(
+        json.dumps(spec.mcp_servers, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    dsh_mcp_config_path = agent_config_dir / "dsh-mcp-servers.json"
+    dsh_mcp_config_path.write_text(
+        json.dumps(project_dsh_mcp_servers(spec.mcp_servers), ensure_ascii=False, indent=2)
+        + "\n",
+        encoding="utf-8",
+    )
 
     manifest: dict[str, Any] = {
         "status": "prepared",
@@ -56,6 +71,9 @@ def prepare_run(
             "artifacts": str(run_dir / "artifacts"),
             "evidence": str(run_dir / "evidence"),
             "trace": str(run_dir / "trace"),
+            "agent_config": str(agent_config_dir),
+            "mcp_servers": str(mcp_config_path),
+            "dsh_mcp_servers": str(dsh_mcp_config_path),
         },
     }
     _write_manifest(run_dir, manifest)

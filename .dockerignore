@@ -5,9 +5,15 @@
 !docker/codex-agent/Dockerfile
 !docker/codex-agent/Dockerfile.sandbox
 !docker/codex-agent/entrypoint.sh
+!docker/codex-agent/render_codex_config.mjs
 !gateway/
 !gateway/**
 !vendor/
 !vendor/blender-mcp/
 !vendor/blender-mcp/mcp.tar.gz
 !vendor/blender-mcp/SOURCE.json
+!cache/
+!cache/codex/
+!cache/codex/openai-codex.tgz
+!cache/codex/codex-linux-x64.tgz
+!cache/codex/VERSION

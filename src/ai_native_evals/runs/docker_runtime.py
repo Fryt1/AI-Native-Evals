@@ -261,10 +261,13 @@ def _agent_run_args(
         "--env",
         f"BLENDER_MCP_PORT={run.get('mcp_port', 9876)}",
         "--env",
-        f"EVAL_ENABLE_BLENDER_MCP={1 if run.get('mcp_blender', False) else 0}",
+        "EVAL_MCP_SERVERS_FILE=/run-config/mcp-servers.json",
     ]
 
     _mount(args, Path(paths["project"]), "/workspace/game-engine")
+    agent_config = paths.get("agent_config")
+    if agent_config and Path(agent_config).is_dir():
+        _mount(args, Path(agent_config), "/run-config", readonly=True)
     dsh_path = paths.get("dsh")
     if dsh_path and Path(dsh_path).is_dir():
         _mount(args, Path(dsh_path), "/workspace/ai-native-dsh")
@@ -277,8 +280,9 @@ def _agent_run_args(
     return args
 
 
-def _mount(args: list[str], source: Path, target: str) -> None:
-    args.extend(["--mount", f"type=bind,src={_linux_path(source)},dst={target}"])
+def _mount(args: list[str], source: Path, target: str, *, readonly: bool = False) -> None:
+    mode = ",readonly" if readonly else ""
+    args.extend(["--mount", f"type=bind,src={_linux_path(source)},dst={target}{mode}"])
 
 
 def _runtime_metadata(run_id: str) -> dict[str, str]:

@@ -17,7 +17,7 @@ sandbox:
 defaults:
   agent: codex
   model_profile: sub2api-deepseek
-  mcp_profile: blender-host
+  mcp_profile: none
   snapshot_mode: working_tree
 
 model_profiles:
@@ -29,23 +29,94 @@ model_profiles:
 agents:
   codex:
     image: ai-native-codex-agent:local
+  codex-dcc:
+    image: ai-native-codex-agent:all-mcp
+  codex-all:
+    image: ai-native-codex-agent:all-mcp
   dsh:
     image: ai-native-dsh-agent:local
 
 mcp_profiles:
+  none:
+    servers: {}
+
   blender-host:
-    blender: true
     host: host.docker.internal
     port: 9876
-    ue5: false
+    servers:
+      blender:
+        transport: stdio
+        command: /opt/blender-mcp/bin/blender-mcp
+        env:
+          BLENDER_MCP_HOST: ${MCP_HOST}
+          BLENDER_MCP_PORT: ${MCP_PORT}
+
   ue5-host:
-    blender: false
+    host: host.docker.internal
+    port: 8000
+    servers:
+      unreal-mcp:
+        transport: streamable-http
+        url: http://${MCP_HOST}:${MCP_PORT}/mcp
+        startup_timeout_sec: 30
+        tool_timeout_sec: 900
+
+  comfyui-host:
+    host: host.docker.internal
+    port: 8188
+    servers:
+      comfyui:
+        transport: stdio
+        command: /opt/blender-mcp/bin/comfy-mcp
+        cwd: /workspace/game-engine
+        env:
+          COMFY_BIN: /opt/blender-mcp/bin/comfy
+          COMFYUI_URL: http://${MCP_HOST}:${MCP_PORT}
+          COMFY_LOCAL_URL: http://${MCP_HOST}:${MCP_PORT}
+          COMFY_WHERE: local
+
+  research-host:
+    servers:
+      huggingface:
+        transport: streamable-http
+        url: https://huggingface.co/mcp?login
+        startup_timeout_sec: 30
+        tool_timeout_sec: 300
+
+  all-host:
     host: host.docker.internal
     port: 9876
-    ue5: true
+    servers:
+      blender:
+        transport: stdio
+        command: /opt/blender-mcp/bin/blender-mcp
+        env:
+          BLENDER_MCP_HOST: ${MCP_HOST}
+          BLENDER_MCP_PORT: ${MCP_PORT}
+      unreal-mcp:
+        transport: streamable-http
+        url: http://${MCP_HOST}:8000/mcp
+        startup_timeout_sec: 30
+        tool_timeout_sec: 900
+      comfyui:
+        transport: stdio
+        command: /opt/blender-mcp/bin/comfy-mcp
+        cwd: /workspace/game-engine
+        env:
+          COMFY_BIN: /opt/blender-mcp/bin/comfy
+          COMFYUI_URL: http://${MCP_HOST}:8188
+          COMFY_LOCAL_URL: http://${MCP_HOST}:8188
+          COMFY_WHERE: local
+      huggingface:
+        transport: streamable-http
+        url: https://huggingface.co/mcp?login
+        startup_timeout_sec: 30
+        tool_timeout_sec: 300
 
 tasks:
   blender-cube:
+    agent: codex-dcc
+    mcp_profile: blender-host
     prompt: >-
       Create a small cube in the currently running Blender instance through the
       configured Blender MCP tools. Save a verification artifact under

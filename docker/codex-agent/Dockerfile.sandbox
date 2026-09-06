@@ -1,9 +1,10 @@
-ARG NODE_BASE_IMAGE=node:22-bookworm
+ARG NODE_BASE_IMAGE=ai-native-llm-gateway:local
 FROM ${NODE_BASE_IMAGE}
 
 ARG CODEX_VERSION=0.153.4
 ARG NPM_REGISTRY=https://registry.npmjs.org
 
+USER root
 WORKDIR /workspace
 ENV CODEX_HOME=/opt/codex-home
 ENV EVAL_MODEL=deepseek/deepseek-v4-flash
@@ -13,11 +14,20 @@ ENV EVAL_REASONING_EFFORT=high
 ENV EVAL_ENABLE_BLENDER_MCP=0
 ENV EVAL_OUTER_SANDBOX=docker
 
-RUN npm install --global --registry=${NPM_REGISTRY} @openai/codex@${CODEX_VERSION} \
+COPY cache/codex/openai-codex.tgz /tmp/openai-codex.tgz
+COPY cache/codex/codex-linux-x64.tgz /tmp/codex-linux-x64.tgz
+
+RUN npm install --global --offline --omit=optional /tmp/openai-codex.tgz \
+    && mkdir -p /usr/local/lib/node_modules/@openai/codex-linux-x64 \
+    && tar -xzf /tmp/codex-linux-x64.tgz \
+       -C /usr/local/lib/node_modules/@openai/codex-linux-x64 \
+       --strip-components=1 \
     && mkdir -p /opt/codex-home /workspace \
-    && chown -R node:node /opt/codex-home /workspace
+    && chown -R node:node /opt/codex-home /workspace \
+    && rm -f /tmp/openai-codex.tgz /tmp/codex-linux-x64.tgz
 
 COPY docker/codex-agent/entrypoint.sh /usr/local/bin/ai-native-codex-entrypoint
+COPY docker/codex-agent/render_codex_config.mjs /usr/local/lib/ai-native/render_codex_config.mjs
 RUN chmod +x /usr/local/bin/ai-native-codex-entrypoint
 
 USER node

@@ -3,7 +3,8 @@ param(
     [string]$Distro = "Ubuntu-20.04",
     [switch]$UseMirror,
     [switch]$IncludeBlenderMcp,
-    [string]$CodexVersion = "0.153.4"
+    [string]$CodexVersion = "0.153.4",
+    [string]$NpmRegistry = "https://registry.npmmirror.com"
 )
 
 $ErrorActionPreference = "Stop"
@@ -31,7 +32,7 @@ $AgentDockerfile = if ($IncludeBlenderMcp) {
     "$WslRoot/docker/codex-agent/Dockerfile.sandbox"
 }
 $AgentTag = if ($IncludeBlenderMcp) {
-    "ai-native-codex-agent:blender-mcp"
+    "ai-native-codex-agent:all-mcp"
 } else {
     "ai-native-codex-agent:local"
 }
@@ -39,23 +40,43 @@ $AgentArgs = @(
     "build",
     "-f", $AgentDockerfile,
     "--build-arg", "CODEX_VERSION=$CodexVersion",
+    "--build-arg", "NODE_BASE_IMAGE=ai-native-llm-gateway:local",
     "-t", $AgentTag
 )
 
+$CacheScript = Join-Path $RepoRoot "tools/prepare-codex-cache.mjs"
+$CacheDir = Join-Path $RepoRoot "cache/codex"
+Write-Host "Ensuring local Codex package cache..."
+& node $CacheScript --version $CodexVersion --registry $NpmRegistry --output-dir $CacheDir
+if ($LASTEXITCODE -ne 0) {
+    throw "Codex package cache preparation failed with exit code $LASTEXITCODE"
+}
+
+$gatewayExists = $false
+& wsl.exe -d $Distro -- docker image inspect ai-native-llm-gateway:local *> $null
+if ($LASTEXITCODE -eq 0) {
+    $gatewayExists = $true
+}
+
+if (-not $gatewayExists) {
+    if ($UseMirror) {
+        $Mirror = "mirror.gcr.io/library"
+        $GatewayArgs += @("--build-arg", "NODE_BASE_IMAGE=$Mirror/node:22-slim")
+    }
+    Write-Host "Building gateway image..."
+    Invoke-Docker ($GatewayArgs + $WslRoot)
+} else {
+    Write-Host "Gateway image already exists; reusing it."
+}
+
 if ($UseMirror) {
-    $Mirror = "mirror.gcr.io/library"
-    $GatewayArgs += @("--build-arg", "NODE_BASE_IMAGE=$Mirror/node:22-slim")
-    $AgentArgs += @(
-        "--build-arg", "NODE_BASE_IMAGE=$Mirror/node:22-slim",
-        "--build-arg", "NPM_REGISTRY=https://registry.npmmirror.com"
-    )
+    $AgentArgs += @("--build-arg", "NPM_REGISTRY=$NpmRegistry")
     if ($IncludeBlenderMcp) {
+        $Mirror = "mirror.gcr.io/library"
         $AgentArgs += "--build-arg", "PYTHON_BASE_IMAGE=$Mirror/python:3.12-slim"
     }
 }
 
-Write-Host "Building gateway image..."
-Invoke-Docker ($GatewayArgs + $WslRoot)
 Write-Host "Building Codex sandbox image ($AgentTag)..."
 Invoke-Docker ($AgentArgs + $WslRoot)
 Write-Host "Sandbox images are ready."

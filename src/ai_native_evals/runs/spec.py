@@ -26,6 +26,7 @@ class RunSpec:
     mcp_port: int
     mcp_blender: bool
     mcp_ue5: bool
+    mcp_servers: dict[str, Any]
     sandbox: dict[str, Any]
     snapshot_mode: str
     game_engine_root: Path

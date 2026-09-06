@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -49,15 +50,24 @@ def resolve_run(
     tasks = _mapping(config, "tasks")
     sandbox_config = _mapping(config, "sandbox")
 
-    agent_name = agent or _string(defaults, "agent", "codex")
+    task_config = _mapping(tasks, task_id)
+    agent_name = agent or _string(
+        task_config,
+        "agent",
+        _string(defaults, "agent", "codex"),
+    )
     profile_name = model_profile or _string(defaults, "model_profile", "default")
-    mcp_name = mcp_profile or _string(defaults, "mcp_profile", "default")
+    mcp_name = mcp_profile or _string(
+        task_config,
+        "mcp_profile",
+        _string(defaults, "mcp_profile", "default"),
+    )
     snapshot_mode = _string(defaults, "snapshot_mode", "working_tree")
 
     agent_config = _mapping(agents, agent_name)
     profile = _mapping(profiles, profile_name)
     mcp_config = _mapping(mcp_profiles, mcp_name)
-    task_config = _mapping(tasks, task_id)
+    mcp_servers = _resolve_mcp_servers(mcp_config)
     if not profile:
         raise EvalConfigError(f"unknown model profile: {profile_name}")
     if not agent_config:
@@ -89,8 +99,9 @@ def resolve_run(
         mcp_profile=mcp_name,
         mcp_host=_string(mcp_config, "host", "host.docker.internal"),
         mcp_port=_integer(mcp_config, "port", 9876),
-        mcp_blender=bool(mcp_config.get("blender", False)),
-        mcp_ue5=bool(mcp_config.get("ue5", False)),
+        mcp_blender="blender" in mcp_servers,
+        mcp_ue5="unreal-mcp" in mcp_servers,
+        mcp_servers=mcp_servers,
         sandbox=sandbox_config,
         snapshot_mode=snapshot_mode,
         game_engine_root=game_engine_root,
@@ -98,6 +109,45 @@ def resolve_run(
         runs_root=runs_root,
         run_dir=runs_root / run_id,
     )
+
+
+def _resolve_mcp_servers(mcp_config: dict[str, Any]) -> dict[str, Any]:
+    """Resolve one MCP profile into JSON-safe server descriptors."""
+    raw_servers = mcp_config.get("servers", {})
+    if not isinstance(raw_servers, dict):
+        raise EvalConfigError("MCP profile servers must be a mapping")
+
+    variables: dict[str, str] = {
+        "MCP_HOST": _string(mcp_config, "host", "host.docker.internal"),
+        "MCP_PORT": str(_integer(mcp_config, "port", 9876)),
+    }
+    raw_variables = mcp_config.get("variables", {})
+    if isinstance(raw_variables, dict):
+        variables.update({str(key): str(value) for key, value in raw_variables.items()})
+
+    resolved: dict[str, Any] = {}
+    for name, descriptor in raw_servers.items():
+        if not isinstance(name, str) or not name:
+            raise EvalConfigError("MCP server names must be non-empty strings")
+        if not isinstance(descriptor, dict):
+            raise EvalConfigError(f"MCP server {name!r} must be a mapping")
+        resolved[name] = _substitute_mcp_values(copy.deepcopy(descriptor), variables)
+    return resolved
+
+
+def _substitute_mcp_values(value: Any, variables: dict[str, str]) -> Any:
+    """Substitute `${NAME}` placeholders in MCP profile strings."""
+    if isinstance(value, str):
+        for name, replacement in variables.items():
+            value = value.replace(f"${{{name}}}", replacement)
+        return value
+    if isinstance(value, list):
+        return [_substitute_mcp_values(item, variables) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: _substitute_mcp_values(item, variables) for key, item in value.items()
+        }
+    return value
 
 
 def _mapping(value: dict[str, Any], key: str) -> dict[str, Any]:

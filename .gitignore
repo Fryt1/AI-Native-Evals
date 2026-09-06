@@ -20,3 +20,10 @@ config/.env.local
 !src/ai_native_evals/runs/**
 !src/ai_native_evals/runs/__pycache__/
 !src/ai_native_evals/runs/__pycache__/**
+# Local dependency caches are never committed. They are admitted to the Docker
+# build context only when explicitly named below.
+cache/
+!cache/codex/
+!cache/codex/openai-codex.tgz
+!cache/codex/codex-linux-x64.tgz
+!cache/codex/VERSION

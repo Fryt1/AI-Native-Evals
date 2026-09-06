@@ -6,34 +6,21 @@ set -eu
 : "${BLENDER_MCP_PORT:=9876}"
 
 mkdir -p "$CODEX_HOME"
-cat > "$CODEX_HOME/config.toml" <<EOF
-model_provider = "eval"
-model = "${EVAL_MODEL}"
-model_reasoning_effort = "${EVAL_REASONING_EFFORT}"
-disable_response_storage = true
+node /usr/local/lib/ai-native/render_codex_config.mjs \
+  "$CODEX_HOME/config.toml" \
+  "${EVAL_MCP_SERVERS_FILE:-/run-config/mcp-servers.json}"
 
-[model_providers.eval]
-name = "AI-Native Evaluation Gateway"
-base_url = "${EVAL_GATEWAY_URL}"
-wire_api = "${EVAL_WIRE_API}"
-requires_openai_auth = true
-env_key = "EVAL_GATEWAY_API_KEY"
-EOF
-
-if [ "${EVAL_ENABLE_BLENDER_MCP:-1}" = "1" ]; then
-  cat >> "$CODEX_HOME/config.toml" <<EOF
-
-[mcp_servers.blender]
-command = "/opt/blender-mcp/bin/blender-mcp"
-
-[mcp_servers.blender.env]
-BLENDER_MCP_HOST = "${BLENDER_MCP_HOST}"
-BLENDER_MCP_PORT = "${BLENDER_MCP_PORT}"
-EOF
-fi
-
+# Evaluation runs are non-interactive. Always use `codex exec` so Docker does
+# not need to provide a TTY or an interactive stdin stream.
+CODEX_ARGS=""
 if [ "${EVAL_OUTER_SANDBOX:-docker}" = "docker" ]; then
-  exec codex --dangerously-bypass-approvals-and-sandbox "$@"
-else
-  exec codex "$@"
+  CODEX_ARGS="--dangerously-bypass-approvals-and-sandbox"
 fi
+
+exec codex ${CODEX_ARGS} exec \
+  --json \
+  --ephemeral \
+  --skip-git-repo-check \
+  --cd /workspace/game-engine \
+  --output-last-message /workspace/trace/codex-last-message.txt \
+  "$@"

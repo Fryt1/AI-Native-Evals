@@ -125,10 +125,28 @@ capabilities, no-new-privileges, memory/PID limits, and per-run writable
 workspace/evidence/trace mounts. `run wait` persists the container log and
 releases the network and containers.
 
-The Agent image includes the official Blender MCP Server. That MCP Server runs
-in Docker; the Blender Add-on bridge remains in the host Blender process and
-is reached through `BLENDER_MCP_HOST:BLENDER_MCP_PORT`. This keeps the Agent
-sandboxed without moving Blender/UE5 into the container.
+MCP is a per-run capability, not a global Codex setting. The selected profile
+is snapshotted to `agent-config/mcp-servers.json` and projected into the
+isolated Agent configuration. The current project profiles cover:
+
+```text
+blender-host  → official Blender MCP stdio server → host Blender
+ue5-host      → native UE5 streamable HTTP MCP endpoint
+comfyui-host  → official comfy-mcp stdio server → host ComfyUI API
+research-host → Hugging Face streamable HTTP MCP endpoint
+all-host      → all of the above
+```
+
+The full Agent image includes the official Blender MCP Server and the
+official ComfyUI MCP client when the `all-mcp` image is selected. That MCP Server runs in Docker; the Blender Add-on bridge remains in
+the host Blender process and is reached through `BLENDER_MCP_HOST` and
+`BLENDER_MCP_PORT`. UE5 and ComfyUI remain host services as well. MCP server
+commands are standard provider binaries; this repository does not add an
+Agent-side socket client or protocol adapter.
+
+`AI-Native-DSH` receives the same run-scoped MCP descriptors projected to its
+standard ACP `mcpServers` shape, so Codex and DSH use the same capability
+contract without sharing global configuration.
 
 Defaults live in `config/eval.yaml`; credentials remain in the ignored
 `config/.env.local`. The prepared run records immutable Game Engine and
