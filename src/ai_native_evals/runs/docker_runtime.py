@@ -262,6 +262,12 @@ def _agent_run_args(
         f"BLENDER_MCP_PORT={run.get('mcp_port', 9876)}",
         "--env",
         "EVAL_MCP_SERVERS_FILE=/run-config/mcp-servers.json",
+        "--env",
+        "EVAL_DSH_MCP_SERVERS_FILE=/run-config/dsh-mcp-servers.json",
+        "--env",
+        f"EVAL_RUN_ID={run['run_id']}",
+        "--env",
+        f"EVAL_TASK_ID={run['task_id']}",
     ]
 
     _mount(args, Path(paths["project"]), "/workspace/game-engine")
