@@ -12,3 +12,5 @@ reports/*.jsonl
 .env
 .env.*
 !.env.example
+.env.local
+config/.env.local
