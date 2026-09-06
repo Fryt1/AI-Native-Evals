@@ -261,6 +261,8 @@ def _agent_run_args(
         "--env",
         f"BLENDER_MCP_PORT={run.get('mcp_port', 9876)}",
         "--env",
+        "HOME=/tmp/home",
+        "--env",
         "EVAL_MCP_SERVERS_FILE=/run-config/mcp-servers.json",
         "--env",
         "EVAL_DSH_MCP_SERVERS_FILE=/run-config/dsh-mcp-servers.json",

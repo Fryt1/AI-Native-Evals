@@ -5,7 +5,7 @@ set -eu
 : "${BLENDER_MCP_HOST:=host.docker.internal}"
 : "${BLENDER_MCP_PORT:=9876}"
 
-mkdir -p "$CODEX_HOME"
+mkdir -p "$HOME" "$CODEX_HOME"
 node /usr/local/lib/ai-native/render_codex_config.mjs \
   "$CODEX_HOME/config.toml" \
   "${EVAL_MCP_SERVERS_FILE:-/run-config/mcp-servers.json}"
