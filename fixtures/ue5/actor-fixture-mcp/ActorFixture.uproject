@@ -1,0 +1,24 @@
+{
+  "FileVersion": 3,
+  "EngineAssociation": "{F490E015-4A00-D349-7756-CBA618C5A78D}",
+  "Category": "",
+  "Description": "AI Native Actor capability fixture",
+  "Plugins": [
+    {
+      "Name": "EditorScriptingUtilities",
+      "Enabled": true
+    },
+    {
+      "Name": "PythonScriptPlugin",
+      "Enabled": true
+    },
+    {
+      "Name": "ModelContextProtocol",
+      "Enabled": true
+    },
+    {
+      "Name": "AllToolsets",
+      "Enabled": true
+    }
+  ]
+}
