@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from inspect_ai.model import ChatMessageSystem
 from inspect_ai.scorer import Score, Scorer, Target, accuracy, scorer
 from inspect_ai.solver import TaskState
 
@@ -42,6 +43,13 @@ def workspace_file_scorer(relative_path: str, expected_text: str) -> Scorer:
             )
 
         passed = actual_text == expected_text
+        state.messages.append(
+            ChatMessageSystem(
+                content=f"File changed: {path.name}",
+                source="generate",
+                metadata={"eval_event": "file_changed", "path": str(path)},
+            )
+        )
         return Score(
             value=passed,
             answer="pass" if passed else "content_mismatch",
@@ -55,6 +63,7 @@ def workspace_file_scorer(relative_path: str, expected_text: str) -> Scorer:
                 "expected_length": len(expected_text),
                 "actual_length": len(actual_text),
                 "agent_run": state.store.get("agent_run"),
+                "codex_event_count": state.store.get("codex_event_count"),
             },
         )
 

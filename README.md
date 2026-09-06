@@ -83,4 +83,4 @@ Run the real Codex smoke task from the repository root:
 uv run inspect eval src/ai_native_evals/tasks/codex_file_smoke.py@codex_file_smoke --model mockllm/model
 ```
 
-The run writes `codex-events.jsonl`, `codex-stderr.log`, `codex-last-message.txt`, and `run-manifest.json` under `runs/codex-file-smoke/<run-id>/`. The scorer checks the actual `hello.txt` bytes; it does not trust the final Agent message.
+The run writes `codex-events.jsonl`, `codex-stderr.log`, `codex-last-message.txt`, and `run-manifest.json` under `runs/codex-file-smoke/<run-id>/`. The scorer checks the actual `hello.txt` bytes; it does not trust the final Agent message. Codex lifecycle, command execution, tool results, Agent messages, and file-change events are also projected into the Inspect Messages/Transcript view.

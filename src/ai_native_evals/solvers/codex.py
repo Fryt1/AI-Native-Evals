@@ -9,6 +9,7 @@ from uuid import uuid4
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 
 from ai_native_evals.adapters.codex import CodexAdapter, CodexConfig
+from ai_native_evals.adapters.codex_events import project_codex_events
 from ai_native_evals.contracts import AgentLaunchSpec
 from ai_native_evals.sandboxes import WorkspaceSpec, prepare_workspace
 
@@ -47,6 +48,9 @@ def codex_agent(
         result = await adapter.run(spec)
         state.store.set("agent_run", result.to_dict())
         state.store.set("run_dir", str(run_dir))
+        projected_messages = project_codex_events(result.events_path)
+        state.store.set("codex_event_count", len(projected_messages))
+        state.messages.extend(projected_messages)
         return state
 
     return solve

@@ -36,7 +36,7 @@ and verifies a file result before any DCC process is introduced.
 `CodexAdapter` launches the selected Codex CLI in an isolated `run_dir` with
 non-interactive JSON events, then captures its transcript, stderr, last message,
 and machine-readable run manifest. `codex_file_smoke` is the first end-to-end
-proof of this path.
+proof of this path. The Codex JSONL event stream is projected into Inspect ChatMessages so the Viewer can show lifecycle events, command/tool calls, results, Agent messages, and file changes.
 
 ### DSH
 
