@@ -89,4 +89,3 @@ def _git(cwd: Path, *args: str) -> str:
     except OSError:
         return ""
     return result.stdout.strip() if result.returncode == 0 else ""
-

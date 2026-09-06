@@ -18,3 +18,5 @@ config/.env.local
 # Source package name is runs; do not confuse it with runtime output directories.
 !src/ai_native_evals/runs/
 !src/ai_native_evals/runs/**
+!src/ai_native_evals/runs/__pycache__/
+!src/ai_native_evals/runs/__pycache__/**
