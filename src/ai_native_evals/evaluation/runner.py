@@ -317,6 +317,132 @@ def _text_equals(context: EvaluationContext, check: CheckSpec) -> CheckResult:
     )
 
 
+@register_evaluator("script.json_contract.v1")
+def _json_contract(context: EvaluationContext, check: CheckSpec) -> CheckResult:
+    """Validate a JSON artifact against task-declared structural constraints."""
+    started = _utc_now()
+    raw_artifact = check.input.get("artifact") or check.input.get("path")
+    if not isinstance(raw_artifact, str) or not raw_artifact:
+        return _error_result(check, started, "json_contract requires input.artifact or input.path")
+    try:
+        path = _resolve_artifact_reference(context, raw_artifact)
+    except (EvaluationError, OSError) as exc:
+        return _error_result(check, started, str(exc))
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return _error_result(check, started, f"JSON artifact does not exist: {path}")
+    except (OSError, json.JSONDecodeError) as exc:
+        return _error_result(check, started, f"could not parse JSON artifact {path}: {exc}")
+    if not isinstance(payload, dict):
+        return _error_result(check, started, "JSON contract root must be an object")
+
+    config = check.config
+    problems: list[str] = []
+    checks: dict[str, Any] = {}
+    required = config.get("required_fields", [])
+    if not isinstance(required, list):
+        return _error_result(check, started, "json_contract required_fields must be a list")
+    for field_name in required:
+        if not isinstance(field_name, str) or not field_name:
+            return _error_result(
+                check, started, "json_contract required_fields must contain strings"
+            )
+        found, value = _get_field(payload, field_name)
+        checks[f"required:{field_name}"] = found
+        if not found:
+            problems.append(f"missing required field: {field_name}")
+
+    expected_values = config.get("field_values", {})
+    if not isinstance(expected_values, dict):
+        return _error_result(check, started, "json_contract field_values must be a mapping")
+    for field_name, expected in expected_values.items():
+        found, actual = _get_field(payload, str(field_name))
+        checks[f"value:{field_name}"] = {"expected": expected, "actual": actual}
+        if not found or actual != expected:
+            problems.append(f"field {field_name!r}={actual!r}, expected {expected!r}")
+
+    non_empty = config.get("non_empty_fields", [])
+    if not isinstance(non_empty, list):
+        return _error_result(check, started, "json_contract non_empty_fields must be a list")
+    for field_name in non_empty:
+        found, actual = _get_field(payload, str(field_name))
+        valid = found and actual not in (None, "", [], {})
+        checks[f"non_empty:{field_name}"] = valid
+        if not valid:
+            problems.append(f"field {field_name!r} must be non-empty")
+
+    field_types = config.get("field_types", {})
+    if not isinstance(field_types, dict):
+        return _error_result(check, started, "json_contract field_types must be a mapping")
+    for field_name, expected_type in field_types.items():
+        found, actual = _get_field(payload, str(field_name))
+        valid = found and _json_type_name(actual) == str(expected_type)
+        checks[f"type:{field_name}"] = {
+            "expected": expected_type,
+            "actual": _json_type_name(actual) if found else None,
+        }
+        if not valid:
+            problems.append(
+                f"field {field_name!r} has type "
+                f"{_json_type_name(actual) if found else None!r}, expected {expected_type!r}"
+            )
+
+    array_min_lengths = config.get("array_min_lengths", {})
+    if not isinstance(array_min_lengths, dict):
+        return _error_result(check, started, "json_contract array_min_lengths must be a mapping")
+    for field_name, minimum in array_min_lengths.items():
+        found, actual = _get_field(payload, str(field_name))
+        valid = isinstance(actual, list) and len(actual) >= int(minimum)
+        checks[f"array_min:{field_name}"] = {
+            "minimum": minimum,
+            "actual": len(actual) if isinstance(actual, list) else None,
+        }
+        if not valid:
+            problems.append(f"field {field_name!r} must contain at least {minimum} items")
+
+    passed = not problems
+    return CheckResult(
+        check_id=check.id,
+        phase=check.phase,
+        evaluator=check.evaluator,
+        status="passed" if passed else "failed",
+        passed=passed,
+        score=1.0 if passed else 0.0,
+        details={"path": str(path), "payload": payload, "checks": checks, "problems": problems},
+        evidence_refs=(str(path),),
+        error=None if passed else "; ".join(problems),
+        started_at=started,
+        finished_at=_utc_now(),
+    )
+
+
+def _get_field(payload: dict[str, Any], field_name: str) -> tuple[bool, Any]:
+    """Read a dotted field path from a JSON object."""
+    current: Any = payload
+    for part in field_name.split("."):
+        if not isinstance(current, dict) or part not in current:
+            return False, None
+        current = current[part]
+    return True, current
+
+
+def _json_type_name(value: Any) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, dict):
+        return "object"
+    if isinstance(value, (int, float)):
+        return "number"
+    return type(value).__name__
+
+
 @register_evaluator("script.blender_scene.v1")
 def _blender_scene(context: EvaluationContext, check: CheckSpec) -> CheckResult:
     """Open a selected Blender scene and verify task-specific expectations."""

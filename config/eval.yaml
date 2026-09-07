@@ -263,6 +263,87 @@ tasks:
       /workspace/evidence/blender-cube.json, and verify the cube exists before
       reporting completion. Do not use shell scripts or a custom socket client
       to control Blender.
+  structured-report-contract:
+    agent: codex
+    mcp_profile: none
+    prompt: >-
+      Create /workspace/output/agent-result.json as a UTF-8 JSON object for the
+      task structured-report-contract. It must contain task_id exactly
+      structured-report-contract, status exactly completed, a non-empty summary,
+      and an artifacts array containing an object whose path is
+      /workspace/output/agent-result.json and whose kind is json. Read the file
+      back and verify its JSON before reporting completion. Do not modify source
+      files or create any other output file.
+    test_plan:
+      version: 1
+      quality_threshold: 0.8
+      checks:
+        - id: locate-result
+          phase: outcome
+          evaluator: agent.artifact_locator.v1
+          input:
+            roots:
+              - /workspace/output
+          config:
+            prompt: prompts/outcome/artifact-locator-v1.md
+            artifact_kind: json_document
+            expected_name: agent-result.json
+          required: true
+          on_error: fail
+        - id: validate-result-contract
+          phase: outcome
+          evaluator: script.json_contract.v1
+          input:
+            artifact: locate-result.selected_artifact
+          config:
+            required_fields:
+              - task_id
+              - status
+              - summary
+              - artifacts
+            field_values:
+              task_id: structured-report-contract
+              status: completed
+            non_empty_fields:
+              - summary
+              - artifacts
+            field_types:
+              task_id: string
+              status: string
+              summary: string
+              artifacts: array
+            array_min_lengths:
+              artifacts: 1
+          required: true
+          on_error: fail
+          depends_on:
+            - locate-result
+        - id: report-quality
+          phase: quality
+          evaluator: agent.quality_judge.v1
+          input:
+            artifact: validate-result-contract.path
+          config:
+            prompt: prompts/quality/structured-report-v1.md
+            rubric: config/rubrics/structured-report.yaml
+          required: false
+          weight: 1.0
+          on_error: review
+          depends_on:
+            - validate-result-contract
+        - id: process-observation
+          phase: process
+          evaluator: trace.process_analyzer.v1
+          config:
+            metrics:
+              - tool_failures
+              - retries
+              - verification_before_finish
+          required: false
+          on_error: review
+      hard_checks:
+        - locate-result
+        - validate-result-contract
   codex-file-smoke:
     prompt: >-
       Create /workspace/output/hello.txt with exactly the text

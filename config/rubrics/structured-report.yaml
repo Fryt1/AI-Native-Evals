@@ -1,0 +1,8 @@
+criteria:
+  - id: completeness
+    description: The report includes the required task identity, completion status, summary, and artifact record.
+    weight: 0.5
+  - id: clarity
+    description: The summary is concise, understandable, and consistent with the structured fields.
+    weight: 0.5
+passing_score: 0.8

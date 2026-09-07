@@ -176,6 +176,45 @@ def test_artifact_locator_maps_agent_path_and_script_uses_it(
     assert report["checks"][1]["status"] == "passed"
 
 
+def test_json_contract_checks_nested_fields(tmp_path: Path) -> None:
+    run_dir, manifest = _manifest(
+        tmp_path,
+        {
+            "checks": [
+                {
+                    "id": "contract",
+                    "phase": "outcome",
+                    "evaluator": "script.json_contract.v1",
+                    "input": {"path": "/workspace/output/result.json"},
+                    "config": {
+                        "required_fields": ["task_id", "meta.owner", "items"],
+                        "field_values": {"task_id": "demo", "meta.owner": "eval"},
+                        "non_empty_fields": ["items"],
+                        "field_types": {"task_id": "string", "items": "array"},
+                        "array_min_lengths": {"items": 1},
+                    },
+                }
+            ]
+        },
+    )
+    result = Path(manifest["paths"]["output"]) / "result.json"
+    result.write_text(
+        json.dumps(
+            {
+                "task_id": "demo",
+                "meta": {"owner": "eval"},
+                "items": ["one"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = runner.evaluate_run(run_dir)
+
+    assert report["decision"] == "pass"
+    assert report["checks"][0]["details"]["payload"]["meta"]["owner"] == "eval"
+
+
 def test_invalid_plan_fails_before_any_check(tmp_path: Path) -> None:
     run_dir, _manifest_value = _manifest(
         tmp_path,
