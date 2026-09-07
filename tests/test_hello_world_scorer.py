@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-import pytest
 from inspect_ai.model import ModelName
 from inspect_ai.solver import TaskState
 
