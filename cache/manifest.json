@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-09-07T17:08:42.1682228Z",
+  "generated_at": "2026-09-07T17:14:41.6972811Z",
   "platform": "linux/amd64",
-  "repository_commit": "a0abc8d5643954f005749eefcc5783629229b4bd",
+  "repository_commit": "ddb9ddc93052c8c433f3f55aff988933f40986e8",
   "registries": {
     "pypi": "https://pypi.tuna.tsinghua.edu.cn/simple",
     "npm": "https://registry.npmmirror.com"
