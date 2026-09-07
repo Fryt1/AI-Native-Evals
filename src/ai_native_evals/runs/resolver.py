@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import yaml
 
+from ..plans import TestPlan
 from .spec import RunSpec
 
 
@@ -66,6 +67,10 @@ def resolve_run(
     verify_config = task_config.get("verify") or {}
     if not isinstance(verify_config, dict):
         raise EvalConfigError("task verify block must be a mapping")
+    try:
+        test_plan = TestPlan.from_mapping(task_config.get("test_plan"))
+    except ValueError as exc:
+        raise EvalConfigError(str(exc)) from exc
 
     agent_config = _mapping(agents, agent_name)
     profile = _mapping(profiles, profile_name)
@@ -106,6 +111,7 @@ def resolve_run(
         mcp_ue5="unreal-mcp" in mcp_servers,
         mcp_servers=mcp_servers,
         verify=verify_config,
+        test_plan=test_plan,
         sandbox=sandbox_config,
         snapshot_mode=snapshot_mode,
         game_engine_root=game_engine_root,

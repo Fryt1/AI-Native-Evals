@@ -66,6 +66,29 @@ def _prepare_from_args(args: argparse.Namespace) -> tuple[Path, Path]:
     return repo_root, run_dir
 
 
+def _plan(args: argparse.Namespace) -> int:
+    """Resolve and display one task's declarative test plan."""
+    repo_root = _repo_root()
+    config = args.config.resolve() if args.config else repo_root / "config" / "eval.yaml"
+    spec = resolve_run(
+        repo_root,
+        args.task_id,
+        config_path=config,
+        agent=args.agent,
+        model_profile=args.model_profile,
+        game_engine_ref=args.game_engine_ref,
+        dsh_ref=args.dsh_ref,
+        mcp_profile=args.mcp_profile,
+    )
+    payload = {
+        "task_id": spec.task_id,
+        "test_plan": spec.test_plan.to_dict(),
+        "ordered_checks": [check.id for check in spec.test_plan.ordered_checks()],
+    }
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0
+
+
 def _prepare(args: argparse.Namespace) -> int:
     _repo_root_value, run_dir = _prepare_from_args(args)
     print(json.dumps(load_manifest(run_dir), ensure_ascii=False, indent=2))
@@ -228,6 +251,12 @@ def main() -> int:
     run_parser = subparsers.add_parser("run", help="manual evaluation run lifecycle")
     run_subparsers = run_parser.add_subparsers(dest="run_command", required=True)
 
+    plan_parser = run_subparsers.add_parser(
+        "plan", help="resolve and display a task's declarative test plan"
+    )
+    plan_parser.add_argument("task_id")
+    _add_run_options(plan_parser)
+
     prepare_parser = run_subparsers.add_parser("prepare", help="snapshot repos and create a run")
     prepare_parser.add_argument("task_id")
     _add_run_options(prepare_parser)
@@ -282,6 +311,8 @@ def main() -> int:
         if args.command != "run":
             parser.print_help()
             return 0
+        if args.run_command == "plan":
+            return _plan(args)
         if args.run_command == "prepare":
             return _prepare(args)
         if args.run_command == "execute":

@@ -7,6 +7,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from ..plans import TestPlan
+
 
 @dataclass(frozen=True, slots=True)
 class RunSpec:
@@ -28,6 +30,7 @@ class RunSpec:
     mcp_ue5: bool
     mcp_servers: dict[str, Any]
     verify: dict[str, Any]
+    test_plan: TestPlan
     sandbox: dict[str, Any]
     snapshot_mode: str
     game_engine_root: Path
@@ -41,4 +44,7 @@ class RunSpec:
         payload = asdict(self)
         for key in ("game_engine_root", "dsh_root", "runs_root", "run_dir"):
             payload[key] = str(payload[key])
+        # Keep the plan's explicit normalized representation rather than the
+        # dataclass field order produced by ``asdict``.
+        payload["test_plan"] = self.test_plan.to_dict()
         return payload

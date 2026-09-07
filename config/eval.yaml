@@ -199,3 +199,28 @@ tasks:
     prompt: >-
       Create /workspace/evidence/hello.txt with exactly the text
       ai-native-codex-ok, then read it back and verify the contents.
+    test_plan:
+      version: 1
+      checks:
+        - id: locate-hello-file
+          phase: outcome
+          evaluator: agent.artifact_locator.v1
+          input:
+            roots:
+              - /workspace/evidence
+          config:
+            artifact_kind: text_file
+            expected_name: hello.txt
+          required: true
+          on_error: fail
+        - id: hello-file-content
+          phase: outcome
+          evaluator: script.text_equals.v1
+          input:
+            artifact: locate-hello-file.selected_artifact
+          config:
+            expected_text: ai-native-codex-ok
+          required: true
+          on_error: fail
+          depends_on:
+            - locate-hello-file
