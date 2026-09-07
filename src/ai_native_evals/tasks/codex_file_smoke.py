@@ -3,7 +3,7 @@
 from inspect_ai import Task, task
 from inspect_ai.dataset import MemoryDataset, Sample
 
-from ai_native_evals.scorers import workspace_file_scorer
+from ai_native_evals.scorers import hello_world_scorer
 from ai_native_evals.solvers import codex_agent
 
 
@@ -24,10 +24,13 @@ def codex_file_smoke() -> Task:
             name="ai-native-codex-file-smoke",
         ),
         solver=codex_agent(run_root_override="runs/codex-file-smoke"),
-        scorer=workspace_file_scorer("hello.txt", "hello"),
+        scorer=hello_world_scorer(
+            relative_path="evidence/hello.txt", expected_text="ai-native-codex-ok"
+        ),
         metadata={
             "suite": "ai-native-evals",
             "kind": "codex-smoke",
             "run_root": "runs/codex-file-smoke",
         },
     )
+

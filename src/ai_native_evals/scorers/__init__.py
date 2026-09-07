@@ -2,7 +2,14 @@
 
 from .ainative import ai_native_engine_scorer
 from .filesystem import workspace_file_scorer
+from .hello_world import hello_world_scorer
 from .multi_dcc_host_verifier import multi_dcc_host_verifier
 
-__all__ = ["ai_native_engine_scorer", "multi_dcc_host_verifier", "workspace_file_scorer"]
+__all__ = [
+    "ai_native_engine_scorer",
+    "hello_world_scorer",
+    "multi_dcc_host_verifier",
+    "workspace_file_scorer",
+]
+
 
