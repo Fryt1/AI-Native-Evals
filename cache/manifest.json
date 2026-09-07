@@ -1,0 +1,673 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-09-07T17:08:42.1682228Z",
+  "platform": "linux/amd64",
+  "repository_commit": "a0abc8d5643954f005749eefcc5783629229b4bd",
+  "registries": {
+    "pypi": "https://pypi.tuna.tsinghua.edu.cn/simple",
+    "npm": "https://registry.npmmirror.com"
+  },
+  "packages": {
+    "codex": {
+      "version": "0.153.4",
+      "files": [
+        "cache/codex/openai-codex.tgz",
+        "cache/codex/codex-linux-x64.tgz"
+      ]
+    },
+    "blender_mcp": {
+      "source": "vendor/blender-mcp/mcp.tar.gz",
+      "source_metadata": "vendor/blender-mcp/SOURCE.json",
+      "lock": "cache/python/blender-mcp/requirements.lock",
+      "wheelhouse": "cache/python/blender-mcp/wheels"
+    },
+    "comfy_mcp": {
+      "lock": "cache/python/comfy-mcp/requirements.lock",
+      "wheelhouse": "cache/python/comfy-mcp/wheels"
+    }
+  },
+  "docker_images": [
+    {
+      "name": "python:3.12-slim",
+      "id": "sha256:ec7d6c95cd3692a2e2d228a8b1ca74e4025b54121fcc4c5da6f09cfa473315ad",
+      "repo_digests": [
+        "python@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea"
+      ],
+      "created": "2026-09-01T00:12:40.129211396Z",
+      "size_bytes": 127410407
+    },
+    {
+      "name": "node:22-bookworm",
+      "id": "sha256:8887b8ec221d30668763e573da75dac8e41ba2b7afe86b6f126a81cebad44f58",
+      "repo_digests": [
+        "node@sha256:b501c082306a4f528bc4038cbf2fbb58095d583d0419a259b2114b5ac53d12e9"
+      ],
+      "created": "2026-03-05T21:10:15.685699Z",
+      "size_bytes": 1132523066
+    },
+    {
+      "name": "ai-native-llm-gateway:local",
+      "id": "sha256:c0f8c400ce8bd77223e7bd534a17c9c391f96d410947b3f96043b0b39312d4bb",
+      "repo_digests": [],
+      "created": "2026-09-07T16:11:46.449511214Z",
+      "size_bytes": 1132527774
+    },
+    {
+      "name": "ai-native-codex-agent:local",
+      "id": "sha256:87791e1d1ed1450043f043223790a42924b377e5e3ed667791b6bb85844e7160",
+      "repo_digests": [],
+      "created": "2026-09-07T17:05:45.735658543Z",
+      "size_bytes": 1598247870
+    },
+    {
+      "name": "ai-native-codex-agent:all-mcp",
+      "id": "sha256:727748e53ec4ab563d02e0742bb91505824da03e44b47194d5b46386b01c55f9",
+      "repo_digests": [],
+      "created": "2026-09-07T16:16:38.693340961Z",
+      "size_bytes": 1184202020
+    }
+  ],
+  "docker_archive": "cache/docker/sandbox-images.tar",
+  "files": [
+    {
+      "path": "cache/codex/codex-linux-x64.tgz",
+      "size_bytes": 129272137,
+      "sha256": "54818cb9fce3360cc6e44cfc5a96952cd5c1243efb43cbe488e11dda84663e08"
+    },
+    {
+      "path": "cache/codex/openai-codex.tgz",
+      "size_bytes": 4904,
+      "sha256": "fd04263c1adfa1d285c6c0ad86a97cab508d3012ee9eab80a99f773cc4b2fb3a"
+    },
+    {
+      "path": "cache/codex/VERSION",
+      "size_bytes": 8,
+      "sha256": "c7b1dbe266dc7d2b58559449c273be31759a8aa21a54c9d9525b3c08e34c71f4"
+    },
+    {
+      "path": "cache/docker/sandbox-images.tar",
+      "size_bytes": 2833070080,
+      "sha256": "ee431f3260d3691020b0747f18c09373edf4e2e6cf8e34d3b29b0dae33aca0cc"
+    },
+    {
+      "path": "cache/python/blender-mcp/requirements.lock",
+      "size_bytes": 723,
+      "sha256": "f2baf397abd44468afee36d8b8b339eae70e544254730a18bc3f783bbb7421bb"
+    },
+    {
+      "path": "cache/python/blender-mcp/wheels/annotated_doc-0.0.5-py3-none-any.whl",
+      "size_bytes": 5302,
+      "sha256": "117bac03a25ede5df5440e855b32d556049ca169ead221505badf432fed4b101"
+    },
+    {
+      "path": "cache/python/blender-mcp/wheels/annotated_types-0.8.0-py3-none-any.whl",
+      "size_bytes": 13427,
+      "sha256": "f072f4d804ea359e4eaf198b1af7a8b0943881a87f31bb764f8bf219bb9419e0"
+    },
+    {
+      "path": "cache/python/blender-mcp/wheels/anyio-4.15.1-py3-none-any.whl",
+      "size_bytes": 132079,
+      "sha256": "6152fdbbf9a77fdec97731721bebf7c4c44f7c29b424b0065826173efc7ed101"
+    },
+    {
+      "path": "cache/python/blender-mcp/wheels/attrs-26.1.0-py3-none-any.whl",
+      "size_bytes": 67548,
+      "sha256": "c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309"
+    },
+    {
+      "path": "cache/python/blender-mcp/wheels/certifi-2026.7.22-py3-none-any.whl",
+      "size_bytes": 136983,
+      "sha256": "62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775"
+    },
+    {
+      "path": "cache/python/blender-mcp/wheels/cffi-2.1.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+      "size_bytes": 221822,
+      "sha256": "c1453022f490d2459a11819d83ad1d586e9ff65a12ac3e705ffebd46d3685dcf"
+    },
+    {
+      "path": "cache/python/blender-mcp/wheels/click-8.5.0-py3-none-any.whl",
+      "size_bytes": 125251,
+      "sha256": "255bc9599cf7748b4b1a446ccc735421bd08a2ae529a8b88597d3de5664ee360"
+    },
+    {
+      "path": "cache/python/blender-mcp/wheels/cryptography-50.0.1-cp311-abi3-manylinux_2_34_x86_64.whl",
+      "size_bytes": 4746230,
+      "sha256": "51afcfceb15597cf2635068e4ac9a56b2abde622edde17f37d85fd7b5306497a"
+    },
+    {
+      "path": "cache/python/blender-mcp/wheels/docutils-0.23-py3-none-any.whl",
+      "size_bytes": 634701,
+      "sha256": "25d013af9bf23bc1c7b2b093dff4208166c53a94786c9e447808335ef1185fea"
+    },
+    {
+      "path": "cache/python/blender-mcp/wheels/h11-0.16.0-py3-none-any.whl",
+      "size_bytes": 37515,
+      "sha256": "63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86"
+    },
+    {
+      "path": "cache/python/blender-mcp/wheels/httpcore-1.0.9-py3-none-any.whl",
+      "size_bytes": 78784,
+      "sha256": "2d400746a40668fc9dec9810239072b40b4484b640a8c38fd654a024c7a1bf55"
+    },
+    {
+      "path": "cache/python/blender-mcp/wheels/httpx_sse-0.4.3-py3-none-any.whl",
+      "size_bytes": 8960,
+      "sha256": "0ac1c9fe3c0afad2e0ebb25a934a59f4c7823b60792691f779fad2c5568830fc"
+    },
+    {
+      "path": "cache/python/blender-mcp/wheels/httpx-0.28.1-py3-none-any.whl",
+      "size_bytes": 73517,
+      "sha256": "d909fcccc110f8c7faf814ca82a9a4d816bc5a6dbfea25d6591d6985b8ba59ad"
+    },
+    {
+      "path": "cache/python/blender-mcp/wheels/idna-3.19-py3-none-any.whl",
+      "size_bytes": 68550,
+      "sha256": "815e7be7a7806d54abb586dc943addc79e8b2ee16915059658cbeff4b1b43bf4"
+    },
+    {
+      "path": "cache/python/blender-mcp/wheels/jsonschema_specifications-2025.9.1-py3-none-any.whl",
+      "size_bytes": 18437,
+      "sha256": "98802fee3a11ee76ecaca44429fda8a41bff98b00a0f2838151b113f210cc6fe"
+    },
+    {
+      "path": "cache/python/blender-mcp/wheels/jsonschema-4.26.0-py3-none-any.whl",
+      "size_bytes": 90630,
+      "sha256": "d489f15263b8d200f8387e64b4c3a75f06629559fb73deb8fdfb525f2dab50ce"
+    },
+    {
+      "path": "cache/python/blender-mcp/wheels/markdown_it_py-4.2.0-py3-none-any.whl",
+      "size_bytes": 91687,
+      "sha256": "9f7ebbcd14fe59494226453aed97c1070d83f8d24b6fc3a3bcf9a38092641c4a"
+    },
+    {
+      "path": "cache/python/blender-mcp/wheels/mcp-1.30.0-py3-none-any.whl",
+      "size_bytes": 234581,
+      "sha256": "666edb5009503e1047c9d60346a756f94b261f05cc2625f23d41c728ffc484d0"
+    },
+    {
+      "path": "cache/python/blender-mcp/wheels/mdurl-0.1.2-py3-none-any.whl",
+      "size_bytes": 9979,
+      "sha256": "84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8"
+    },
+    {
+      "path": "cache/python/blender-mcp/wheels/pycparser-3.0-py3-none-any.whl",
+      "size_bytes": 48172,
+      "sha256": "b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992"
+    },
+    {
+      "path": "cache/python/blender-mcp/wheels/pydantic_core-2.46.5-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+      "size_bytes": 2066284,
+      "sha256": "0fc5be0abd4a407e200d844b404e33639a554e7bd0d448e7b9ae181be4789ac2"
+    },
+    {
+      "path": "cache/python/blender-mcp/wheels/pydantic_settings-2.15.0-py3-none-any.whl",
+      "size_bytes": 69413,
+      "sha256": "0ba092c291c94baceb5eff768aa0d56400a457585bc0175925a5a5510303da42"
+    },
+    {
+      "path": "cache/python/blender-mcp/wheels/pydantic-2.13.5-py3-none-any.whl",
+      "size_bytes": 472589,
+      "sha256": "346a034f080da3755d8e9cb5e00e8b07de1d39e4f6e2c87d8ab7cafa0b269a73"
+    },
+    {
+      "path": "cache/python/blender-mcp/wheels/pygments-2.21.0-py3-none-any.whl",
+      "size_bytes": 1250147,
+      "sha256": "2363c69b61c4a97c838da3b130dcd6468f4848992b21a82f2a63ec34377137d9"
+    },
+    {
+      "path": "cache/python/blender-mcp/wheels/pyjwt-2.13.0-py3-none-any.whl",
+      "size_bytes": 31274,
+      "sha256": "66adcc2aff09b3f1bbd95fc1e1577df8ac8723c978552fd43304c8a290ac5728"
+    },
+    {
+      "path": "cache/python/blender-mcp/wheels/python_dotenv-1.2.3-py3-none-any.whl",
+      "size_bytes": 22780,
+      "sha256": "904552145e8bfed22162c09dab1c2b9b54fefa7b23ba780f4f26ca0316b0f0d9"
+    },
+    {
+      "path": "cache/python/blender-mcp/wheels/python_multipart-0.0.32-py3-none-any.whl",
+      "size_bytes": 30042,
+      "sha256": "ff6d3f776f16878c894e52e107296ffc890e913c611b1a4ec6c44e2821fe2e23"
+    },
+    {
+      "path": "cache/python/blender-mcp/wheels/pyyaml-6.0.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+      "size_bytes": 807870,
+      "sha256": "ba1cc08a7ccde2d2ec775841541641e4548226580ab850948cbfda66a1befcdc"
+    },
+    {
+      "path": "cache/python/blender-mcp/wheels/referencing-0.37.0-py3-none-any.whl",
+      "size_bytes": 26766,
+      "sha256": "381329a9f99628c9069361716891d34ad94af76e461dcb0335825aecc7692231"
+    },
+    {
+      "path": "cache/python/blender-mcp/wheels/rich-15.0.0-py3-none-any.whl",
+      "size_bytes": 310654,
+      "sha256": "33bd4ef74232fb73fe9279a257718407f169c09b78a87ad3d296f548e27de0bb"
+    },
+    {
+      "path": "cache/python/blender-mcp/wheels/rpds_py-2026.6.3-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+      "size_bytes": 366189,
+      "sha256": "ecabd69db66de867690f9797f2f8fa27ba501bbc24540cbdbdc649cd15888ba6"
+    },
+    {
+      "path": "cache/python/blender-mcp/wheels/setuptools-84.0.0-py3-none-any.whl",
+      "size_bytes": 818216,
+      "sha256": "51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670"
+    },
+    {
+      "path": "cache/python/blender-mcp/wheels/shellingham-1.5.4-py2.py3-none-any.whl",
+      "size_bytes": 9755,
+      "sha256": "7ecfff8f2fd72616f7481040475a65b2bf8af90a56c89140852d1120324e8686"
+    },
+    {
+      "path": "cache/python/blender-mcp/wheels/sse_starlette-3.4.11-py3-none-any.whl",
+      "size_bytes": 17122,
+      "sha256": "c7b2244bdff016fe7f64e10075e89a3e6bbf899649cc89b0fe884b5545042453"
+    },
+    {
+      "path": "cache/python/blender-mcp/wheels/starlette-1.6.0-py3-none-any.whl",
+      "size_bytes": 75969,
+      "sha256": "a86dd39d14bb45f85a3d18525215a9ef0cfd1f192ac793220e72598c90335f0c"
+    },
+    {
+      "path": "cache/python/blender-mcp/wheels/typer-0.27.2-py3-none-any.whl",
+      "size_bytes": 123130,
+      "sha256": "b3a5fc4342d5fc8fda8fc3010b1cf117e9249aab7fae800c2eff62fd3842d97d"
+    },
+    {
+      "path": "cache/python/blender-mcp/wheels/typing_extensions-4.16.0-py3-none-any.whl",
+      "size_bytes": 45571,
+      "sha256": "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8"
+    },
+    {
+      "path": "cache/python/blender-mcp/wheels/typing_inspection-0.4.4-py3-none-any.whl",
+      "size_bytes": 14750,
+      "sha256": "65b8397ba37ccbce054456aaccddfc91e6e3083c92824df348d96ca832f3f147"
+    },
+    {
+      "path": "cache/python/blender-mcp/wheels/uvicorn-0.52.4-py3-none-any.whl",
+      "size_bytes": 79871,
+      "sha256": "f86e41a149d7d05a9969337e3946a9c171c06a5d42680896daaba624aeac8da1"
+    },
+    {
+      "path": "cache/python/comfy-mcp/requirements.lock",
+      "size_bytes": 1360,
+      "sha256": "24cbbb10111c60fab1ebb3c7bef820a722f3f0f72cbb567db9c8bf372234655f"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/annotated_doc-0.0.5-py3-none-any.whl",
+      "size_bytes": 5302,
+      "sha256": "117bac03a25ede5df5440e855b32d556049ca169ead221505badf432fed4b101"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/annotated_types-0.8.0-py3-none-any.whl",
+      "size_bytes": 13427,
+      "sha256": "f072f4d804ea359e4eaf198b1af7a8b0943881a87f31bb764f8bf219bb9419e0"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/anyio-4.15.1-py3-none-any.whl",
+      "size_bytes": 132079,
+      "sha256": "6152fdbbf9a77fdec97731721bebf7c4c44f7c29b424b0065826173efc7ed101"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/arrow-1.4.0-py3-none-any.whl",
+      "size_bytes": 68797,
+      "sha256": "749f0769958ebdc79c173ff0b0670d59051a535fa26e8eba02953dc19eb43205"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/attrs-26.1.0-py3-none-any.whl",
+      "size_bytes": 67548,
+      "sha256": "c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/backoff-2.2.1-py3-none-any.whl",
+      "size_bytes": 15148,
+      "sha256": "63579f9a0628e06278f7e47b7d7d5b6ce20dc65c5e96a6f3ca99a6adca0396e8"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/binaryornot-0.6.0-py3-none-any.whl",
+      "size_bytes": 14185,
+      "sha256": "900adfd5e1b821255ba7e63139b0396b14c88b9286e74e03b6f51e0200331337"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/certifi-2026.7.22-py3-none-any.whl",
+      "size_bytes": 136983,
+      "sha256": "62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/cffi-2.1.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+      "size_bytes": 221822,
+      "sha256": "c1453022f490d2459a11819d83ad1d586e9ff65a12ac3e705ffebd46d3685dcf"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/charset_normalizer-3.5.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+      "size_bytes": 248801,
+      "sha256": "b9af956078716df40d985fb0dfeb2c2120c5ca92ba4ff4b388acfd01cdc14d08"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/click-8.5.0-py3-none-any.whl",
+      "size_bytes": 125251,
+      "sha256": "255bc9599cf7748b4b1a446ccc735421bd08a2ae529a8b88597d3de5664ee360"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/comfy_cli-1.18.0-py3-none-any.whl",
+      "size_bytes": 1066628,
+      "sha256": "ac1304311952d30a8bb3f82fc708aa8156ef22f9a24e82f252efe27770f79d60"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/comfy_mcp-0.10.0-py3-none-any.whl",
+      "size_bytes": 327673,
+      "sha256": "23f5e02a9865a54d85811e9a4242beca911400e083a3c8dedbebb07309baecb0"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/cookiecutter-2.7.1-py3-none-any.whl",
+      "size_bytes": 41317,
+      "sha256": "cee50defc1eaa7ad0071ee9b9893b746c1b3201b66bf4d3686d0f127c8ed6cf9"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/cryptography-50.0.1-cp311-abi3-manylinux_2_34_x86_64.whl",
+      "size_bytes": 4746230,
+      "sha256": "51afcfceb15597cf2635068e4ac9a56b2abde622edde17f37d85fd7b5306497a"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/distro-1.9.0-py3-none-any.whl",
+      "size_bytes": 20277,
+      "sha256": "7bffd925d65168f85027d8da9af6bddab658135b840670a223589bc0c8ef02b2"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/gitdb-4.0.12-py3-none-any.whl",
+      "size_bytes": 62794,
+      "sha256": "67073e15955400952c6565cc3e707c554a4eea2e428946f7a4c162fab9bd9bcf"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/gitpython-3.1.62-py3-none-any.whl",
+      "size_bytes": 222753,
+      "sha256": "7002251225e10e29d2e1f49e6532613fe5d5d9f0b6f1f02997a52b38fe56899e"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/h11-0.16.0-py3-none-any.whl",
+      "size_bytes": 37515,
+      "sha256": "63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/httpcore-1.0.9-py3-none-any.whl",
+      "size_bytes": 78784,
+      "sha256": "2d400746a40668fc9dec9810239072b40b4484b640a8c38fd654a024c7a1bf55"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/httpcore2-2.12.0-py3-none-any.whl",
+      "size_bytes": 83074,
+      "sha256": "7e04258ce01013d7d615e5b910a3b27fac937d7a95038227e79652b4ba3b4ceb"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/httpx-0.28.1-py3-none-any.whl",
+      "size_bytes": 73517,
+      "sha256": "d909fcccc110f8c7faf814ca82a9a4d816bc5a6dbfea25d6591d6985b8ba59ad"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/httpx2-2.12.0-py3-none-any.whl",
+      "size_bytes": 95427,
+      "sha256": "cc8b6eecb8661c146b8f89a60e97456ee086e91a784ed31ac450c3a9e613dd36"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/idna-3.19-py3-none-any.whl",
+      "size_bytes": 68550,
+      "sha256": "815e7be7a7806d54abb586dc943addc79e8b2ee16915059658cbeff4b1b43bf4"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/imageio_ffmpeg-0.6.0-py3-none-manylinux2014_x86_64.whl",
+      "size_bytes": 29498237,
+      "sha256": "c7e46fcec401dd990405049d2e2f475e2b397779df2519b544b8aab515195282"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/jinja2-3.1.6-py3-none-any.whl",
+      "size_bytes": 134899,
+      "sha256": "85ece4451f492d0c13c5dd7c13a64681a86afae63a5f347908daf103ce6d2f67"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/jsonschema_specifications-2025.9.1-py3-none-any.whl",
+      "size_bytes": 18437,
+      "sha256": "98802fee3a11ee76ecaca44429fda8a41bff98b00a0f2838151b113f210cc6fe"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/jsonschema-4.26.0-py3-none-any.whl",
+      "size_bytes": 90630,
+      "sha256": "d489f15263b8d200f8387e64b4c3a75f06629559fb73deb8fdfb525f2dab50ce"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/markdown_it_py-4.2.0-py3-none-any.whl",
+      "size_bytes": 91687,
+      "sha256": "9f7ebbcd14fe59494226453aed97c1070d83f8d24b6fc3a3bcf9a38092641c4a"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/markupsafe-3.0.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+      "size_bytes": 22947,
+      "sha256": "d6dd0be5b5b189d31db7cda48b91d7e0a9795f31430b7f271219ab30f1d3ac9d"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/mcp_types-2.1.1-py3-none-any.whl",
+      "size_bytes": 69656,
+      "sha256": "26f9f7f03f2a5730717a5b98e2ab7eb640ac352d05a00cdc725c311864778295"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/mcp-2.1.1-py3-none-any.whl",
+      "size_bytes": 357912,
+      "sha256": "1c6c31c5d6471c58db76af3af8af67f46d11d01f0a59077d0a308cbdb3d3e915"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/mdurl-0.1.2-py3-none-any.whl",
+      "size_bytes": 9979,
+      "sha256": "84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/mixpanel-4.11.1-py3-none-any.whl",
+      "size_bytes": 10026,
+      "sha256": "130633fb7d65f1fea10a9b6a6d3b8239121f2039ff2280ceb97cb9a73a711f29"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/opentelemetry_api-1.44.0-py3-none-any.whl",
+      "size_bytes": 60018,
+      "sha256": "94b98c893a91b88657eaac1e3ba89618cdb85be6918196705354f34728b2cdef"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/packaging-26.3-py3-none-any.whl",
+      "size_bytes": 129956,
+      "sha256": "d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/pathspec-1.1.1-py3-none-any.whl",
+      "size_bytes": 57328,
+      "sha256": "a00ce642f577bf7f473932318056212bc4f8bfdf53128c78bbd5af0b9b20b189"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/posthog-7.47.1-py3-none-any.whl",
+      "size_bytes": 601496,
+      "sha256": "d325b044fa400fcc85be4da5de8c4f258732c94081ea8179b175af85474e72b8"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/prompt_toolkit-3.0.53-py3-none-any.whl",
+      "size_bytes": 392288,
+      "sha256": "01c0891d7f9237d5e339f7d3e42cdae80b7534abb1c7c0e3352efba6231492f2"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/psutil-7.2.2-cp36-abi3-manylinux2010_x86_64.manylinux_2_12_x86_64.manylinux_2_28_x86_64.whl",
+      "size_bytes": 155560,
+      "sha256": "076a2d2f923fd4821644f5ba89f059523da90dc9014e85f8e45a5774ca5bc6f9"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/pycparser-3.0-py3-none-any.whl",
+      "size_bytes": 48172,
+      "sha256": "b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/pydantic_core-2.46.5-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+      "size_bytes": 2066284,
+      "sha256": "0fc5be0abd4a407e200d844b404e33639a554e7bd0d448e7b9ae181be4789ac2"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/pydantic-2.13.5-py3-none-any.whl",
+      "size_bytes": 472589,
+      "sha256": "346a034f080da3755d8e9cb5e00e8b07de1d39e4f6e2c87d8ab7cafa0b269a73"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/pygments-2.21.0-py3-none-any.whl",
+      "size_bytes": 1250147,
+      "sha256": "2363c69b61c4a97c838da3b130dcd6468f4848992b21a82f2a63ec34377137d9"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/pyjwt-2.13.0-py3-none-any.whl",
+      "size_bytes": 31274,
+      "sha256": "66adcc2aff09b3f1bbd95fc1e1577df8ac8723c978552fd43304c8a290ac5728"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/python_dateutil-2.9.0.post0-py2.py3-none-any.whl",
+      "size_bytes": 229892,
+      "sha256": "a8b2bc7bffae282281c8140a97d3aa9c14da0b136dfe83f850eea9a5f7470427"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/python_multipart-0.0.32-py3-none-any.whl",
+      "size_bytes": 30042,
+      "sha256": "ff6d3f776f16878c894e52e107296ffc890e913c611b1a4ec6c44e2821fe2e23"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/python_slugify-8.0.4-py2.py3-none-any.whl",
+      "size_bytes": 10051,
+      "sha256": "276540b79961052b66b7d116620b36518847f52d5fd9e3a70164fc8c50faa6b8"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/pyyaml-6.0.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+      "size_bytes": 807870,
+      "sha256": "ba1cc08a7ccde2d2ec775841541641e4548226580ab850948cbfda66a1befcdc"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/questionary-2.1.1-py3-none-any.whl",
+      "size_bytes": 36753,
+      "sha256": "a51af13f345f1cdea62347589fbb6df3b290306ab8930713bfae4d475a7d4a59"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/referencing-0.37.0-py3-none-any.whl",
+      "size_bytes": 26766,
+      "sha256": "381329a9f99628c9069361716891d34ad94af76e461dcb0335825aecc7692231"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/requests-2.34.2-py3-none-any.whl",
+      "size_bytes": 73075,
+      "sha256": "2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/rich-15.0.0-py3-none-any.whl",
+      "size_bytes": 310654,
+      "sha256": "33bd4ef74232fb73fe9279a257718407f169c09b78a87ad3d296f548e27de0bb"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/rpds_py-2026.6.3-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+      "size_bytes": 366189,
+      "sha256": "ecabd69db66de867690f9797f2f8fa27ba501bbc24540cbdbdc649cd15888ba6"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/ruff-0.16.6-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+      "size_bytes": 10317748,
+      "sha256": "d72c591a96986ee4268860e2b7235082129ca5e4cb9cbba653a4b57c11893757"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/semver-3.0.4-py3-none-any.whl",
+      "size_bytes": 17912,
+      "sha256": "9c824d87ba7f7ab4a1890799cec8596f15c1241cb473404ea1cb0c55e4b04746"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/shellingham-1.5.4-py2.py3-none-any.whl",
+      "size_bytes": 9755,
+      "sha256": "7ecfff8f2fd72616f7481040475a65b2bf8af90a56c89140852d1120324e8686"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/six-1.17.0-py2.py3-none-any.whl",
+      "size_bytes": 11050,
+      "sha256": "4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/smmap-5.0.3-py3-none-any.whl",
+      "size_bytes": 24390,
+      "sha256": "c106e05d5a61449cf6ba9a1e650227ecfb141590d2a98412103ff35d89fc7b2f"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/sse_starlette-3.4.11-py3-none-any.whl",
+      "size_bytes": 17122,
+      "sha256": "c7b2244bdff016fe7f64e10075e89a3e6bbf899649cc89b0fe884b5545042453"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/starlette-1.6.0-py3-none-any.whl",
+      "size_bytes": 75969,
+      "sha256": "a86dd39d14bb45f85a3d18525215a9ef0cfd1f192ac793220e72598c90335f0c"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/text_unidecode-1.3-py2.py3-none-any.whl",
+      "size_bytes": 78154,
+      "sha256": "1311f10e8b895935241623731c2ba64f4c455287888b18189350b67134a822e8"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/tomlkit-0.15.1-py3-none-any.whl",
+      "size_bytes": 49449,
+      "sha256": "177a05aece5a8ca5266fd3c448abb47b8d352f09d477d3ca8332db4d89b24304"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/truststore-0.10.4-py3-none-any.whl",
+      "size_bytes": 18660,
+      "sha256": "adaeaecf1cbb5f4de3b1959b42d41f6fab57b2b1666adb59e89cb0b53361d981"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/typer-0.27.2-py3-none-any.whl",
+      "size_bytes": 123130,
+      "sha256": "b3a5fc4342d5fc8fda8fc3010b1cf117e9249aab7fae800c2eff62fd3842d97d"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/typing_extensions-4.16.0-py3-none-any.whl",
+      "size_bytes": 45571,
+      "sha256": "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/typing_inspection-0.4.4-py3-none-any.whl",
+      "size_bytes": 14750,
+      "sha256": "65b8397ba37ccbce054456aaccddfc91e6e3083c92824df348d96ca832f3f147"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/tzdata-2026.3-py2.py3-none-any.whl",
+      "size_bytes": 348168,
+      "sha256": "dc096730c87af6cab1b171c9d532be840741ff5d459015e7f6947bd7d7e54931"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/urllib3-2.7.0-py3-none-any.whl",
+      "size_bytes": 131087,
+      "sha256": "9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/uv-0.12.10-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+      "size_bytes": 19978237,
+      "sha256": "f7d6248ad9f2d282fea795f248da8fa666ab382df50d8385bd98e01049440a0c"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/uvicorn-0.52.4-py3-none-any.whl",
+      "size_bytes": 79871,
+      "sha256": "f86e41a149d7d05a9969337e3946a9c171c06a5d42680896daaba624aeac8da1"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/wcwidth-0.8.3-py3-none-any.whl",
+      "size_bytes": 331669,
+      "sha256": "d5b73dba6158a595ec9370350e7f2637bcac8d6c5e4fde34f30fcffb6103a5e4"
+    },
+    {
+      "path": "cache/python/comfy-mcp/wheels/websocket_client-1.9.2-py3-none-any.whl",
+      "size_bytes": 95786,
+      "sha256": "e1a673830a9c7bfa47b1cd3d5e4178f4c9651d80a4eab02c9c23a1c3ec6250ce"
+    },
+    {
+      "path": "vendor/blender-mcp/mcp.tar.gz",
+      "size_bytes": 2949687,
+      "sha256": "907ea2190d22fc9143448efb9df75631c3b82ac658d4a6c526da9068cc20b1f5"
+    },
+    {
+      "path": "vendor/blender-mcp/SOURCE.json",
+      "size_bytes": 260,
+      "sha256": "b4d5b27b2cfaeb07a6c2715c7222077e0402a26d04a35f3335fb8ebcbd9cfe0c"
+    }
+  ]
+}

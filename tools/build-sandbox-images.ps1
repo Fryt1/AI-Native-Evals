@@ -4,8 +4,12 @@ param(
     [switch]$UseMirror,
     [Alias("IncludeAllMcp")]
     [switch]$IncludeBlenderMcp,
+    [switch]$Offline,
     [string]$CodexVersion = "0.153.4",
-    [string]$NpmRegistry = "https://registry.npmmirror.com"
+    [string]$PythonBaseImage = "python:3.12-slim",
+    [string]$NodeBaseImage = "node:22-bookworm",
+    [string]$NpmRegistry = "https://registry.npmmirror.com",
+    [string]$PyPIIndex = "https://pypi.tuna.tsinghua.edu.cn/simple"
 )
 
 $ErrorActionPreference = "Stop"
@@ -13,6 +17,8 @@ $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $Drive = $RepoRoot.Substring(0, 1).ToLowerInvariant()
 $Relative = $RepoRoot.Substring(2).Replace("\", "/")
 $WslRoot = "/mnt/$Drive$Relative"
+$ArchiveWindows = Join-Path $RepoRoot "cache\docker\sandbox-images.tar"
+$Archive = "$WslRoot/cache/docker/sandbox-images.tar"
 
 function Invoke-Docker {
     param([string[]]$Arguments)
@@ -22,67 +28,90 @@ function Invoke-Docker {
     }
 }
 
-$GatewayArgs = @(
-    "build",
-    "--pull=false",
-    "-f", "$WslRoot/gateway/Dockerfile",
-    "-t", "ai-native-llm-gateway:local"
-)
-$AgentDockerfile = if ($IncludeBlenderMcp) {
-    "$WslRoot/docker/codex-agent/Dockerfile"
-} else {
-    "$WslRoot/docker/codex-agent/Dockerfile.sandbox"
+function Test-Image([string]$Image) {
+    & wsl.exe -d $Distro -- docker image inspect $Image *> $null
+    return $LASTEXITCODE -eq 0
 }
-$AgentTag = if ($IncludeBlenderMcp) {
-    "ai-native-codex-agent:all-mcp"
-} else {
-    "ai-native-codex-agent:local"
-}
-$AgentArgs = @(
-    "build",
-    "--pull=false",
-    "-f", $AgentDockerfile,
-    "--build-arg", "CODEX_VERSION=$CodexVersion",
-    "--build-arg", "NODE_BASE_IMAGE=ai-native-llm-gateway:local",
-    "-t", $AgentTag
-)
 
-$CacheScript = Join-Path $RepoRoot "tools/prepare-codex-cache.mjs"
-$CacheDir = Join-Path $RepoRoot "cache/codex"
+if ($Offline) {
+    $verify = Join-Path $RepoRoot "tools\verify-cache.ps1"
+    if (-not (Test-Path -LiteralPath $ArchiveWindows -PathType Leaf)) {
+        throw "Offline cache archive does not exist: $ArchiveWindows. Run prepare-offline-cache.ps1 first."
+    }
+    Write-Host "Loading cached Docker images..."
+    Invoke-Docker @("load", "-i", $Archive)
+    & pwsh -NoProfile -File $verify -Distro $Distro -RequireDockerArchive
+    if ($LASTEXITCODE -ne 0) {
+        throw "Offline cache verification failed"
+    }
+}
+
 Write-Host "Ensuring local Codex package cache..."
-& node $CacheScript --version $CodexVersion --registry $NpmRegistry --output-dir $CacheDir
+$cacheVersion = Join-Path $RepoRoot "cache\codex\VERSION"
+if (Test-Path $cacheVersion) {
+    $CodexVersion = (Get-Content $cacheVersion -Raw).Trim()
+}
+& node (Join-Path $RepoRoot "tools\prepare-codex-cache.mjs") `
+    --version $CodexVersion `
+    --registry $NpmRegistry `
+    --output-dir (Join-Path $RepoRoot "cache\codex")
 if ($LASTEXITCODE -ne 0) {
     throw "Codex package cache preparation failed with exit code $LASTEXITCODE"
 }
 
-$gatewayExists = $false
-& wsl.exe -d $Distro -- docker image inspect ai-native-llm-gateway:local *> $null
-if ($LASTEXITCODE -eq 0) {
-    $gatewayExists = $true
-}
+$buildNetworkArgs = if ($Offline) { @("--network", "none") } else { @() }
+$pullArgs = @("--pull=false")
 
-if (-not $gatewayExists) {
-    if ($UseMirror) {
-        $Mirror = "mirror.gcr.io/library"
-        $GatewayArgs += @(
-            "--build-arg",
-            "NODE_BASE_IMAGE=$Mirror/node:22-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5"
-        )
-    }
-    Write-Host "Building gateway image..."
-    Invoke-Docker ($GatewayArgs + $WslRoot)
+# Gateway is a tiny local image built from the cached Node base.
+$gatewayArgs = @("build")
+$gatewayArgs += $pullArgs
+$gatewayArgs += $buildNetworkArgs
+$gatewayArgs += @(
+    "-f", "$WslRoot/gateway/Dockerfile",
+    "--build-arg", "NODE_BASE_IMAGE=$NodeBaseImage",
+    "-t", "ai-native-llm-gateway:local",
+    $WslRoot
+)
+Write-Host "Building gateway image..."
+Invoke-Docker $gatewayArgs
+
+$agentDockerfile = if ($IncludeBlenderMcp) {
+    "$WslRoot/docker/codex-agent/Dockerfile"
 } else {
-    Write-Host "Gateway image already exists; reusing it."
+    "$WslRoot/docker/codex-agent/Dockerfile.sandbox"
 }
+$agentTag = if ($IncludeBlenderMcp) {
+    "ai-native-codex-agent:all-mcp"
+} else {
+    "ai-native-codex-agent:local"
+}
+$agentArgs = @("build")
+$agentArgs += $pullArgs
+$agentArgs += $buildNetworkArgs
+$agentArgs += @(
+    "-f", $agentDockerfile,
+    "--build-arg", "CODEX_VERSION=$CodexVersion",
+    "--build-arg", "NODE_BASE_IMAGE=ai-native-llm-gateway:local",
+    "-t", $agentTag
+)
 
-if ($UseMirror) {
-    $AgentArgs += @("--build-arg", "NPM_REGISTRY=$NpmRegistry")
-    if ($IncludeBlenderMcp) {
-        $Mirror = "mirror.gcr.io/library"
-        $AgentArgs += "--build-arg", "PYTHON_BASE_IMAGE=$Mirror/python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea"
+if ($IncludeBlenderMcp) {
+    if ($UseMirror -and -not $Offline) {
+        $PythonBaseImage = "mirror.gcr.io/library/python:3.12-slim"
     }
+    $agentArgs += @(
+        "--build-arg", "PYTHON_BASE_IMAGE=$PythonBaseImage",
+        "--build-arg", "PYPI_INDEX_URL=$PyPIIndex"
+    )
+    if ($Offline) {
+        $agentArgs += @("--build-arg", "OFFLINE=1")
+    }
+} elseif ($Offline) {
+    # Dockerfile.sandbox installs Codex from the local npm tarballs only.
+    $agentArgs += @("--build-arg", "NPM_REGISTRY=$NpmRegistry")
 }
+$agentArgs += $WslRoot
 
-Write-Host "Building Codex sandbox image ($AgentTag)..."
-Invoke-Docker ($AgentArgs + $WslRoot)
+Write-Host "Building Codex sandbox image ($agentTag)..."
+Invoke-Docker $agentArgs
 Write-Host "Sandbox images are ready."

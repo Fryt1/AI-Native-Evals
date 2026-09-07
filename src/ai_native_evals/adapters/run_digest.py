@@ -148,8 +148,9 @@ def digest_run(run_dir: str | Path) -> dict[str, Any]:
     last_message = agent_messages[-1].get("text", "") if agent_messages else ""
     reasoning_chars = sum(len(str(b.get("text", ""))) for b in reasoning_blocks)
 
+    evidence_path = Path(paths.get("evidence", run_dir / "evidence"))
     verify = None
-    verify_path = Path(paths.get("evidence", run_dir / "evidence")) / "verification.json"
+    verify_path = evidence_path / "verification.json"
     if verify_path.is_file():
         try:
             v = _load_json(verify_path)
@@ -159,6 +160,21 @@ def digest_run(run_dir: str | Path) -> dict[str, Any]:
             }
         except DigestError:
             verify = {"passed": None, "path": str(verify_path), "error": "unparseable"}
+
+    evaluation = None
+    evaluation_path = evidence_path / "evaluation.json"
+    if evaluation_path.is_file():
+        try:
+            ev = _load_json(evaluation_path)
+            evaluation = {
+                "decision": ev.get("decision"),
+                "outcome_score": ev.get("outcome_score"),
+                "quality_score": ev.get("quality_score"),
+                "process_score": ev.get("process_score"),
+                "path": str(evaluation_path),
+            }
+        except DigestError:
+            evaluation = {"decision": None, "path": str(evaluation_path), "error": "unparseable"}
 
     timeline = [
         {
@@ -195,6 +211,7 @@ def digest_run(run_dir: str | Path) -> dict[str, Any]:
             "evidence": str(Path(paths.get("evidence", run_dir / "evidence"))),
         },
         "verify": verify,
+        "evaluation": evaluation,
         "stats": {
             "event_items": by_kind,
             "mcp_calls_total": mcp_total,
@@ -260,14 +277,21 @@ def render_digest_markdown(digest: dict[str, Any]) -> str:
         f"- task: `{digest['task_id']}`  agent: `{digest['agent']}`  model: `{digest['model']}`"
     )
     lines.append(f"- started: {digest['started_at']}")
-    v = digest["verify"]
-    if v and v.get("passed") is not None:
-        verdict = "PASS" if v["passed"] else "FAIL"
+    evaluation = digest.get("evaluation")
+    if evaluation and evaluation.get("decision"):
         lines.append(
-            f"- **verify: {verdict}** (independent host read-back, {v.get('path')})"
+            f"- **decision: {str(evaluation['decision']).upper()}** "
+            f"(evaluation, {evaluation.get('path')})"
         )
     else:
-        lines.append("- verify: not available (no verification.json)")
+        v = digest["verify"]
+        if v and v.get("passed") is not None:
+            verdict = "PASS" if v["passed"] else "FAIL"
+            lines.append(
+                f"- **verify: {verdict}** (independent host read-back, {v.get('path')})"
+            )
+        else:
+            lines.append("- decision: not available (no evaluation.json)")
     lines.append("")
     lines.append("## What the agent did")
     lines.append("")
@@ -312,14 +336,25 @@ def render_digest_markdown(digest: dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 def digest_cache_path(run_dir: str | Path) -> Path:
     """Where a run's cached digest lives (next to its trace log)."""
-    return Path(run_dir).resolve() / "trace" / "digest.json"
+    run_dir = Path(run_dir).resolve()
+    manifest_path = run_dir / "run-manifest.json"
+    if manifest_path.is_file():
+        try:
+            manifest = _load_json(manifest_path)
+            paths = manifest.get("paths", {})
+            trace = paths.get("trace") if isinstance(paths, dict) else None
+            if trace:
+                return Path(str(trace)).resolve() / "digest.json"
+        except DigestError:
+            pass
+    return run_dir / "trace" / "digest.json"
 
 
 def write_digest_files(run_dir: str | Path, digest: dict[str, Any] | None = None) -> dict[str, Any]:
     """Persist digest.json + digest.md next to the run's trace log."""
     run_dir = Path(run_dir).resolve()
     digest = digest or digest_run(run_dir)
-    trace_dir = run_dir / "trace"
+    trace_dir = digest_cache_path(run_dir).parent
     trace_dir.mkdir(parents=True, exist_ok=True)
     (trace_dir / "digest.json").write_text(
         json.dumps(digest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
@@ -336,7 +371,16 @@ def digest_run_or_cached(run_dir: str | Path) -> dict[str, Any]:
     """
     run_dir = Path(run_dir).resolve()
     cache = digest_cache_path(run_dir)
+    manifest_path = run_dir / "run-manifest.json"
     log = run_dir / "trace" / "agent-container.log"
+    if manifest_path.is_file():
+        try:
+            manifest = _load_json(manifest_path)
+            paths = manifest.get("paths", {})
+            if isinstance(paths, dict) and paths.get("trace"):
+                log = Path(str(paths["trace"])) / "agent-container.log"
+        except DigestError:
+            pass
     if cache.is_file():
         try:
             cached = json.loads(cache.read_text(encoding="utf-8"))
@@ -374,14 +418,31 @@ def summarize_runs(
         paths = manifest.get("paths", {})
 
         verify = None
+        decision = None
+        outcome_score = None
+        quality_score = None
+        process_score = None
         evidence_dir = Path(paths.get("evidence", run_dir / "evidence"))
-        verify_path = evidence_dir / "verification.json"
-        if verify_path.is_file():
+        evaluation_path = evidence_dir / "evaluation.json"
+        if evaluation_path.is_file():
             try:
-                v = _load_json(verify_path)
-                verify = v.get("passed")
+                ev = _load_json(evaluation_path)
+                decision = ev.get("decision")
+                outcome_score = ev.get("outcome_score")
+                quality_score = ev.get("quality_score")
+                process_score = ev.get("process_score")
+                verify = decision == "pass"
             except DigestError:
-                verify = None
+                pass
+        if verify is None:
+            verify_path = evidence_dir / "verification.json"
+            if verify_path.is_file():
+                try:
+                    v = _load_json(verify_path)
+                    verify = v.get("passed")
+                    decision = "pass" if verify is True else "fail" if verify is False else None
+                except DigestError:
+                    verify = None
 
         digest = None
         if include_digest:
@@ -413,6 +474,10 @@ def summarize_runs(
             "status": str(manifest.get("status", "")),
             "exit": runtime.get("agent_exit_code"),
             "verify": verify,
+            "decision": decision,
+            "outcome_score": outcome_score,
+            "quality_score": quality_score,
+            "process_score": process_score,
             "mcp_calls": stats.get("mcp_calls_total"),
             "mcp_success_rate": stats.get("mcp_success_rate"),
             "shell_commands": stats.get("shell_commands_total"),
@@ -427,28 +492,36 @@ def summarize_runs(
 def render_summary_markdown(rows: list[dict[str, Any]]) -> str:
     """Render the history table as compact Markdown."""
     header = (
-        "| run | finished | task | agent | status | exit | verify | mcp ok% | shell | top failure |"
+        "| run | finished | task | agent | status | exit | decision | outcome | "
+        "quality | process | mcp ok% | shell | top failure |"
     )
-    lines = [header, "|---|---|---|---|---|---|---|---|---|---|"]
+    lines = [header, "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for r in rows:
         # Shorten the per-run uuid suffix but keep the task prefix readable.
         name = r["run"]
         parts = name.rsplit("-", 1)
         if len(parts) == 2 and len(parts[1]) <= 12 and parts[1].isalnum():
             name = parts[0] + "·" + parts[1]
-        verify = {True: "PASS", False: "FAIL", None: "-"}.get(r["verify"], "-")
+        decision = r.get("decision") or {True: "pass", False: "fail", None: "-"}.get(
+            r["verify"], "-"
+        )
         rate = r["mcp_success_rate"]
         rate_txt = f"{rate * 100:.0f}%" if rate is not None else "-"
         finished = str(r["finished"])[:16].replace("T", " ")
+        def score_text(value: Any) -> str:
+            return f"{float(value):.2f}" if isinstance(value, (int, float)) else "-"
         lines.append(
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |".format(
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |".format(
                 name,
                 finished,
                 r["task"],
                 r["agent"],
                 r["status"],
                 r["exit"] if r["exit"] is not None else "-",
-                verify,
+                decision,
+                score_text(r.get("outcome_score")),
+                score_text(r.get("quality_score")),
+                score_text(r.get("process_score")),
                 rate_txt,
                 r["shell_commands"] if r["shell_commands"] is not None else "-",
                 r["top_failure"] or "-",

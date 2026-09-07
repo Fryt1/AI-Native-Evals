@@ -130,6 +130,74 @@ mcp_profiles:
         tool_timeout_sec: 300
 
 tasks:
+  roundtrip-blender-ue5-v3:
+    agent: codex-dcc
+    mcp_profile: blender-ue5-host
+    prompt: >-
+      Work across Blender and UE5 through MCP and leave the final state in this
+      run's persistent workspace. The Windows host path for /workspace is
+      ${HOST_WORKSPACE}. In Blender (server 'blender'), create a unit cube named
+      RoundtripV3Cube at (0,0,3), then save the scene to the host path
+      ${HOST_WORKSPACE}\output\roundtrip-v3.blend. In UE5 (server 'unreal-mcp'),
+      create a StaticMeshActor named RoundtripV3Actor at (0,0,300), and add a
+      cube StaticMeshComponent named RoundtripV3Mesh using the built-in cube mesh.
+      Write a short summary to /workspace/output/roundtrip-v3-summary.json only
+      after verifying both operations. Do not use custom socket clients.
+    test_plan:
+      version: 1
+      checks:
+        - id: locate-blender-scene
+          phase: outcome
+          evaluator: agent.artifact_locator.v1
+          input:
+            roots:
+              - /workspace/output
+          config:
+            prompt: prompts/outcome/artifact-locator-v1.md
+            artifact_kind: blender_scene
+            expected_name: roundtrip-v3.blend
+          required: true
+          on_error: fail
+        - id: verify-blender-state
+          phase: outcome
+          evaluator: script.blender_scene.v1
+          input:
+            artifact: locate-blender-scene.selected_artifact
+          config:
+            objects:
+              - name: RoundtripV3Cube
+                type: MESH
+                location: [0.0, 0.0, 3.0]
+          required: true
+          on_error: fail
+          depends_on:
+            - locate-blender-scene
+        - id: verify-ue5-state
+          phase: outcome
+          evaluator: script.ue5_state.v1
+          config:
+            expectations:
+              actor_label: RoundtripV3Actor
+              location: {x: 0.0, y: 0.0, z: 300.0}
+              expected_components: [StaticMeshComponent0, RoundtripV3Mesh]
+              mesh_ref: /Engine/BasicShapes/Cube.Cube
+              mesh_component: RoundtripV3Mesh
+          required: true
+          on_error: fail
+        - id: process-observation
+          phase: process
+          evaluator: trace.process_analyzer.v1
+          config:
+            metrics:
+              - tool_failures
+              - retries
+              - verification_before_finish
+          required: false
+          on_error: review
+      hard_checks:
+        - locate-blender-scene
+        - verify-blender-state
+        - verify-ue5-state
   roundtrip-blender-ue5-v2:
     agent: codex-dcc
     mcp_profile: blender-ue5-host
@@ -197,18 +265,20 @@ tasks:
       to control Blender.
   codex-file-smoke:
     prompt: >-
-      Create /workspace/evidence/hello.txt with exactly the text
+      Create /workspace/output/hello.txt with exactly the text
       ai-native-codex-ok, then read it back and verify the contents.
     test_plan:
       version: 1
+      quality_threshold: 0.8
       checks:
         - id: locate-hello-file
           phase: outcome
           evaluator: agent.artifact_locator.v1
           input:
             roots:
-              - /workspace/evidence
+              - /workspace/output
           config:
+            prompt: prompts/outcome/artifact-locator-v1.md
             artifact_kind: text_file
             expected_name: hello.txt
           required: true
@@ -224,3 +294,29 @@ tasks:
           on_error: fail
           depends_on:
             - locate-hello-file
+        - id: hello-content-quality
+          phase: quality
+          evaluator: agent.quality_judge.v1
+          input:
+            artifact: hello-file-content.path
+          config:
+            prompt: prompts/quality/text-artifact-v1.md
+            rubric: config/rubrics/hello-world.yaml
+          required: false
+          weight: 1.0
+          on_error: review
+          depends_on:
+            - hello-file-content
+        - id: hello-process
+          phase: process
+          evaluator: trace.process_analyzer.v1
+          config:
+            metrics:
+              - tool_failures
+              - retries
+              - verification_before_finish
+          required: false
+          weight: 1.0
+          on_error: review
+          depends_on:
+            - hello-file-content

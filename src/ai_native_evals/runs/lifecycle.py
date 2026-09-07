@@ -28,14 +28,17 @@ def prepare_run(
     if run_dir.exists():
         raise RunLifecycleError(f"run directory already exists: {run_dir}")
     run_dir.mkdir(parents=True)
-    project_dir = run_dir / "project" / "game-engine"
-    dsh_dir = run_dir / "project" / "ai-native-dsh"
-    agent_config_dir = run_dir / "agent-config"
+    workspace_dir = run_dir / "workspace"
+    project_dir = workspace_dir / "game-engine"
+    dsh_dir = workspace_dir / "ai-native-dsh"
+    agent_config_dir = workspace_dir / "agent-config"
     for child in (
-        run_dir / "workspace",
-        run_dir / "artifacts",
-        run_dir / "evidence",
-        run_dir / "trace",
+        workspace_dir,
+        workspace_dir / "output",
+        workspace_dir / "scratch",
+        workspace_dir / "artifacts",
+        workspace_dir / "evidence",
+        workspace_dir / "trace",
         agent_config_dir,
     ):
         child.mkdir(parents=True)
@@ -57,9 +60,17 @@ def prepare_run(
         encoding="utf-8",
     )
 
+    run_metadata = spec.to_dict()
+    # Task prompts may refer to the real Windows path used by host DCCs. Keep
+    # the resolved value in the manifest so the exact prompt is reproducible.
+    run_metadata["task_prompt"] = _render_task_prompt(
+        str(run_metadata.get("task_prompt", "")),
+        run_id=spec.run_id,
+        workspace_dir=workspace_dir,
+    )
     manifest: dict[str, Any] = {
         "status": "prepared",
-        "run": spec.to_dict(),
+        "run": run_metadata,
         "snapshots": {
             "game_engine": game_snapshot,
             "ai_native_dsh": dsh_snapshot,
@@ -67,10 +78,12 @@ def prepare_run(
         "paths": {
             "project": str(project_dir),
             "dsh": str(dsh_dir) if dsh_snapshot else None,
-            "workspace": str(run_dir / "workspace"),
-            "artifacts": str(run_dir / "artifacts"),
-            "evidence": str(run_dir / "evidence"),
-            "trace": str(run_dir / "trace"),
+            "workspace": str(workspace_dir),
+            "output": str(workspace_dir / "output"),
+            "scratch": str(workspace_dir / "scratch"),
+            "artifacts": str(workspace_dir / "artifacts"),
+            "evidence": str(workspace_dir / "evidence"),
+            "trace": str(workspace_dir / "trace"),
             "agent_config": str(agent_config_dir),
             "mcp_servers": str(mcp_config_path),
             "dsh_mcp_servers": str(dsh_mcp_config_path),
@@ -96,6 +109,7 @@ def update_manifest(
     *,
     status: str | None = None,
     runtime: dict[str, Any] | None = None,
+    evaluation: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Update lifecycle fields while preserving the immutable run metadata."""
     manifest = load_manifest(run_dir)
@@ -103,6 +117,8 @@ def update_manifest(
         manifest["status"] = status
     if runtime is not None:
         manifest["runtime"] = runtime
+    if evaluation is not None:
+        manifest["evaluation"] = evaluation
     _write_manifest(run_dir, manifest)
     return manifest
 
@@ -115,6 +131,15 @@ def cleanup_run(run_dir: Path, runs_root: Path) -> None:
         raise RunLifecycleError(f"refusing to clean path outside runs root: {run_dir}")
     if run_dir.exists():
         shutil.rmtree(run_dir)
+
+
+def _render_task_prompt(prompt: str, *, run_id: str, workspace_dir: Path) -> str:
+    """Resolve run-local placeholders used by host-aware task prompts."""
+    return (
+        prompt.replace("${RUN_ID}", run_id)
+        .replace("${HOST_WORKSPACE}", str(workspace_dir))
+        .replace("${HOST_WORKSPACE_POSIX}", workspace_dir.as_posix())
+    )
 
 
 def _write_manifest(run_dir: Path, value: dict[str, Any]) -> None:

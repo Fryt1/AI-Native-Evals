@@ -138,6 +138,14 @@ def wait_docker_run(run_dir: Path, *, wsl_distro: str | None = None) -> dict[str
     trace_dir = Path(manifest["paths"]["trace"])
     trace_dir.mkdir(parents=True, exist_ok=True)
     (trace_dir / "agent-container.log").write_text(log_text, encoding="utf-8")
+    # Digest generation is best-effort telemetry; it must never mask the Agent
+    # exit code or prevent Docker resource cleanup.
+    try:
+        from ..adapters.run_digest import write_digest_files
+
+        write_digest_files(run_dir)
+    except Exception:
+        pass
 
     stopped = stop_docker_run(run_dir, wsl_distro=str(distro))
     completed_runtime = dict(stopped["runtime"])
@@ -243,7 +251,7 @@ def _agent_run_args(
         runtime["network"],
         *_container_security_args(sandbox, agent=True),
         "--add-host",
-        "host.docker.internal:host-gateway",
+        f"host.docker.internal:{_resolve_wsl_host_ip(str(sandbox.get('distro', 'Ubuntu-20.04')))}",
         "--workdir",
         "/workspace/game-engine",
         "--env",
@@ -272,17 +280,13 @@ def _agent_run_args(
         f"EVAL_TASK_ID={run['task_id']}",
     ]
 
-    _mount(args, Path(paths["project"]), "/workspace/game-engine")
+    # One bind mount is the canonical per-run execution workspace. It keeps
+    # project, output, evidence, trace, and evaluator state in one persisted
+    # host directory that later read-only evaluators can reuse.
+    _mount(args, Path(paths["workspace"]), "/workspace")
     agent_config = paths.get("agent_config")
     if agent_config and Path(agent_config).is_dir():
         _mount(args, Path(agent_config), "/run-config", readonly=True)
-    dsh_path = paths.get("dsh")
-    if dsh_path and Path(dsh_path).is_dir():
-        _mount(args, Path(dsh_path), "/workspace/ai-native-dsh")
-    _mount(args, Path(paths["workspace"]), "/workspace/run-workspace")
-    _mount(args, Path(paths["artifacts"]), "/workspace/artifacts")
-    _mount(args, Path(paths["evidence"]), "/workspace/evidence")
-    _mount(args, Path(paths["trace"]), "/workspace/trace")
 
     args.extend([image, str(run["task_prompt"])])
     return args
@@ -347,6 +351,31 @@ def _safe_name(value: str) -> str:
         for character in value
     )
     return normalized.strip("-")[:50] or "run"
+
+
+def _resolve_wsl_host_ip(distro: str) -> str:
+    """Resolve the Windows host address reachable from a WSL Docker container."""
+    result = subprocess.run(
+        [
+            "wsl.exe",
+            "-d",
+            distro,
+            "--",
+            "sh",
+            "-lc",
+            "ip route | sed -n 's/^default via \\([^ ]*\\).*/\\1/p'",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    candidate = result.stdout.strip().splitlines()[0] if result.stdout.strip() else ""
+    if candidate:
+        return candidate
+    # Older Docker Desktop configurations understand host-gateway directly.
+    return "host-gateway"
 
 
 def _docker(distro: str, *args: str) -> str:

@@ -66,7 +66,10 @@ def test_prepare_run_writes_snapshot_and_manifest(tmp_path: Path) -> None:
     manifest = load_manifest(run_dir)
 
     assert manifest["status"] == "prepared"
-    assert (run_dir / "project" / "game-engine" / "AGENTS.md").read_text() == "rules"
-    assert not (run_dir / "project" / "game-engine" / ".venv").exists()
-    assert (run_dir / "workspace").is_dir()
+    assert (run_dir / "workspace" / "game-engine" / "AGENTS.md").read_text() == "rules"
+    assert not (run_dir / "workspace" / "game-engine" / ".venv").exists()
+    assert (run_dir / "workspace" / "output").is_dir()
+    assert (run_dir / "workspace" / "scratch").is_dir()
+    assert manifest["paths"]["project"] == str(run_dir / "workspace" / "game-engine")
+    assert manifest["paths"]["workspace"] == str(run_dir / "workspace")
     assert manifest["snapshots"]["game_engine"]["dirty"] is False

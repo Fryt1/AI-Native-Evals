@@ -15,8 +15,9 @@ def codex_file_smoke() -> Task:
             [
                 Sample(
                     input=(
-                        "Create a file named hello.txt in the current workspace. "
-                        "Its exact contents must be hello. Do not modify any other file."
+                        "Create output/hello.txt in the current workspace. "
+                        "Its exact contents must be ai-native-codex-ok. "
+                        "Do not modify any other file."
                     ),
                     id="codex-file-001",
                 )
@@ -25,7 +26,7 @@ def codex_file_smoke() -> Task:
         ),
         solver=codex_agent(run_root_override="runs/codex-file-smoke"),
         scorer=hello_world_scorer(
-            relative_path="evidence/hello.txt", expected_text="ai-native-codex-ok"
+            relative_path="output/hello.txt", expected_text="ai-native-codex-ok"
         ),
         metadata={
             "suite": "ai-native-evals",

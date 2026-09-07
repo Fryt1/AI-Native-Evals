@@ -15,7 +15,9 @@ def _manifest(run_dir: Path) -> dict[str, object]:
         "project": str(run_dir / "project" / "game-engine"),
         "dsh": str(run_dir / "project" / "ai-native-dsh"),
         "workspace": str(run_dir / "workspace"),
-        "artifacts": str(run_dir / "artifacts"),
+        "output": str(run_dir / "workspace" / "output"),
+        "scratch": str(run_dir / "workspace" / "scratch"),
+        "artifacts": str(run_dir / "workspace" / "artifacts"),
         "evidence": str(run_dir / "evidence"),
         "trace": str(run_dir / "trace"),
     }
@@ -58,6 +60,7 @@ def test_agent_command_mounts_snapshot_and_prompt(tmp_path: Path) -> None:
     assert "--workdir" in args
     assert "/workspace/game-engine" in args
     assert "type=bind" in " ".join(args)
+    assert "/workspace" in " ".join(args)
     assert args[-2:] == ["test-agent", "Create a cube through Blender MCP."]
 
 

@@ -18,12 +18,18 @@ config/.env.local
 # Source package name is runs; do not confuse it with runtime output directories.
 !src/ai_native_evals/runs/
 !src/ai_native_evals/runs/**
-!src/ai_native_evals/runs/__pycache__/
-!src/ai_native_evals/runs/__pycache__/**
-# Local dependency caches are never committed. They are admitted to the Docker
-# build context only when explicitly named below.
-cache/
+src/ai_native_evals/runs/**/__pycache__/
+src/ai_native_evals/runs/**/__pycache__/**
+# Local dependency caches stay on disk for offline builds but are not committed.
+# Keep only the small reproducibility metadata and lock files in Git.
+cache/*
 !cache/codex/
-!cache/codex/openai-codex.tgz
-!cache/codex/codex-linux-x64.tgz
+cache/codex/*
 !cache/codex/VERSION
+!cache/python/
+!cache/python/*/
+cache/python/*/wheels/*
+!cache/python/*/wheels/
+!cache/python/*/wheels/.gitkeep
+!cache/python/*/requirements.lock
+!cache/manifest.json

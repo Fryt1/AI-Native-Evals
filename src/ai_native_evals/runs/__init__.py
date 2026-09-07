@@ -1,5 +1,6 @@
 """Run lifecycle exports."""
 
+from .agent_sandbox import EvaluatorAgentResult, default_readonly_mounts, run_evaluator_agent
 from .docker_runtime import (
     DockerRuntimeError,
     read_docker_logs,
@@ -20,15 +21,18 @@ from .spec import RunSpec
 
 __all__ = [
     "DockerRuntimeError",
+    "EvaluatorAgentResult",
     "EvalConfigError",
     "RunLifecycleError",
     "RunSpec",
     "cleanup_run",
+    "default_readonly_mounts",
     "load_config",
     "load_manifest",
     "prepare_run",
     "read_docker_logs",
     "resolve_run",
+    "run_evaluator_agent",
     "set_status",
     "start_docker_run",
     "stop_docker_run",

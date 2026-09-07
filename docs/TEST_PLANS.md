@@ -64,6 +64,8 @@ first executable inspection command is:
 uv run ai-native-evals run plan codex-file-smoke
 ```
 
-This slice validates and displays the plan. The next layer will execute
-registered evaluators against the run's persisted workspace/evidence; it will
-not change the plan data model.
+`run evaluate <run-id>` now executes the registered evaluators against the
+run's persisted Workspace/Evidence in dependency order. Agent-backed checks use
+the shared Docker evaluator sandbox; script checks run at the host/verifier
+boundary and write durable CheckResult files. The plan data model remains
+separate from evaluator implementations.

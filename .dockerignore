@@ -1,4 +1,4 @@
-# The agent image only needs the pinned Blender MCP archive and its launch files.
+# Start closed: only explicit build inputs enter the Docker context.
 *
 !docker/
 !docker/codex-agent/
@@ -12,8 +12,16 @@
 !vendor/blender-mcp/
 !vendor/blender-mcp/mcp.tar.gz
 !vendor/blender-mcp/SOURCE.json
-!cache/
 !cache/codex/
 !cache/codex/openai-codex.tgz
 !cache/codex/codex-linux-x64.tgz
 !cache/codex/VERSION
+!cache/python/
+!cache/python/blender-mcp/
+!cache/python/blender-mcp/requirements.lock
+!cache/python/blender-mcp/wheels/
+!cache/python/blender-mcp/wheels/*.whl
+!cache/python/comfy-mcp/
+!cache/python/comfy-mcp/requirements.lock
+!cache/python/comfy-mcp/wheels/
+!cache/python/comfy-mcp/wheels/*.whl

@@ -99,7 +99,22 @@ def _execute(args: argparse.Namespace) -> int:
     repo_root, run_dir = _prepare_from_args(args)
     start_docker_run(run_dir, repo_root)
     result = wait_docker_run(run_dir)
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+    evaluation = None
+    if not args.no_evaluate and result.get("status") in {"completed", "failed"}:
+        plan = result.get("run", {}).get("test_plan", {})
+        if isinstance(plan, dict) and plan.get("checks"):
+            from .evaluation.runner import EvaluationError, evaluate_run
+
+            try:
+                evaluation = evaluate_run(run_dir, repo_root=repo_root)
+            except (EvaluationError, OSError, ValueError) as exc:
+                evaluation = {"decision": "not_evaluable", "error": str(exc)}
+    payload = {"run": result, "evaluation": evaluation}
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    if result.get("status") != "completed":
+        return 1
+    if evaluation is not None and evaluation.get("decision") != "pass":
+        return 1
     return 0
 
 
@@ -154,6 +169,20 @@ def _cleanup(args: argparse.Namespace) -> int:
 
 
 
+
+
+def _evaluate(args: argparse.Namespace) -> int:
+    """Execute the prepared run's declarative TestPlan."""
+    from .evaluation.runner import EvaluationError, evaluate_run
+
+    run_dir = _run_dir_from_arg(_repo_root(), args.run_id)
+    try:
+        report = evaluate_run(run_dir, repo_root=_repo_root())
+    except (EvaluationError, OSError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0 if report.get("decision") == "pass" else 1
 
 
 def _verify(args: argparse.Namespace) -> int:
@@ -266,6 +295,9 @@ def main() -> int:
     )
     execute_parser.add_argument("task_id")
     _add_run_options(execute_parser)
+    execute_parser.add_argument(
+        "--no-evaluate", action="store_true", help="stop after the subject Agent run"
+    )
 
     status_parser = run_subparsers.add_parser("status", help="show a run manifest")
     status_parser.add_argument("run_id")
@@ -293,6 +325,11 @@ def main() -> int:
     )
     digest_parser.add_argument("run_id")
     digest_parser.add_argument("--json", action="store_true", help="emit raw digest JSON")
+    evaluate_parser = run_subparsers.add_parser(
+        "evaluate", help="execute a run's declarative TestPlan and write its verdict"
+    )
+    evaluate_parser.add_argument("run_id")
+
     verify_parser = run_subparsers.add_parser(
         "verify", help="run independent host read-back verification against a finished run"
     )
@@ -329,6 +366,8 @@ def main() -> int:
             return _summary(args)
         if args.run_command == "digest":
             return _digest(args)
+        if args.run_command == "evaluate":
+            return _evaluate(args)
         if args.run_command == "verify":
             return _verify(args)
         if args.run_command == "stop":

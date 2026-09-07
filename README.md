@@ -13,17 +13,26 @@
 ## 架构
 
 ```text
-Inspect AI
+Task / TestPlan
     ↓
-AI-Native-Evals
-    ├── Task / Dataset
-    ├── Codex Solver
-    ├── DSH Solver
-    ├── Windows DCC Sandbox
-    └── Game Engine Scorer
+Run Orchestrator
+    ├── persistent per-run Workspace
+    ├── subject Agent Sandbox
+    └── event trace
             ↓
-        StageResult / Evidence / Artifact
+        Evidence Layer
+            ├── Outcome: Locator Agent + script verifier
+            ├── Quality: read-only Judge Agent + rubric
+            └── Process: trace analyzer
+                    ↓
+              EvaluationReport / Verdict
+                    ↓
+             Inspect AI / Viewer / history
 ```
+
+每个 Task 可以声明自己的 `TestPlan`，由多个有依赖关系的 `CheckSpec`
+组成；Evaluator 实现复用，Task 只提供目标、输入和 Rubric。详见
+`docs/EVALUATION_PIPELINE.md` 和 `docs/TEST_PLANS.md`。
 
 ## 目录
 
@@ -55,7 +64,7 @@ uv run inspect eval src/ai_native_evals/tasks/smoke.py@smoke --model mockllm/mod
 uv run inspect eval --help
 ```
 
-当前 `smoke` task 不调用真实模型，只验证 Inspect Task、Solver、Scorer 三个接口能够组合运行。`codex_file_smoke` 已接入本机 Codex CLI：它在独立 `run_dir` 创建 `hello.txt`，然后由文件状态 Scorer 验收。DSH 和真实 Blender/UE5 环境会在后续提交中接入。
+当前 `smoke` task 不调用真实模型，只验证 Inspect Task、Solver、Scorer 三个接口能够组合运行。真实 Docker run 使用每个测试独立的持久 Workspace；TestPlan 可以依次调用 Outcome Locator Agent、脚本验证、Quality Judge 和 Process Analyzer。
 
 ## 评测原则
 
@@ -67,12 +76,18 @@ uv run inspect eval --help
 
 ## 当前状态
 
-这是第一版骨架。它刻意不包含：
+已经跑通的真实闭环：
 
-- Inspect AI 源码副本
-- 自动调用 UE5/Blender 的隐藏调度器
-- 复制 Game Engine 的 Stage 验收逻辑
-- 只依赖自然语言或 LLM-as-Judge 的主评分
+- Codex 被测 Agent 在 Docker 中运行；Blender/UE5 留在 Windows 主机
+- 每个 run 有独立 Workspace，Outcome/Quality 评测阶段可以只读复用
+- TestPlan → CheckSpec 数据结构已校验并写入 run manifest
+- Outcome Locator Agent + Blender/UE5 脚本读回已通过真实多 DCC run
+- Quality Judge Agent 已通过 hello-world run
+- Process trace、digest、history summary 已保存
+- Inspect AI 仍是外部依赖，本仓库没有复制或 fork Inspect 源码
+
+缓存和离线构建见 `docs/OFFLINE_SANDBOX_CACHE.md`。宿主 DCC 服务见
+`tools/start-eval-hosts.ps1`。
 
 
 ## First real Agent smoke
@@ -128,10 +143,10 @@ uv run ai-native-evals run cleanup <run-id>
 
 `run start` uses the WSL-backed Docker CLI, creates a per-run network, starts
 an isolated LLM Gateway and Agent container, and mounts the prepared snapshot
-read-write at `/workspace/game-engine`. The Agent container has an isolated
+read-write at `/workspace` with `/workspace/game-engine` as its working directory. The Agent container has an isolated
 `CODEX_HOME`, no host `~/.codex` mount, a read-only image root, dropped Linux
 capabilities, no-new-privileges, memory/PID limits, and per-run writable
-workspace/evidence/trace mounts. `run wait` persists the container log and
+output/evidence/trace directories. `run wait` persists the container log and
 releases the network and containers.
 
 MCP is a per-run capability, not a global Codex setting. The selected profile
@@ -160,3 +175,20 @@ contract without sharing global configuration.
 Defaults live in `config/eval.yaml`; credentials remain in the ignored
 `config/.env.local`. The prepared run records immutable Game Engine and
 AI-Native-DSH snapshots in `EvalRuns/<run-id>/`.
+
+
+## Declarative TestPlan run
+
+```powershell
+# 查看一个任务声明了哪些检查
+uv run ai-native-evals run plan codex-file-smoke
+
+# 一次完整运行
+uv run ai-native-evals run execute codex-file-smoke
+# 手动流程结束后执行检查：
+uv run ai-native-evals run evaluate <run-id>
+```
+
+`evaluate` 会在同一个 run Workspace 上执行声明的检查，并将每个 Check 的
+结果写入 `workspace/evidence/checks/`，总结果写入 `evaluation.json` 和
+`verdict.json`。
