@@ -248,3 +248,12 @@ def _parse_json_line(line: str) -> Any:
             return json.loads(value[start:])
         except json.JSONDecodeError:
             return None
+
+
+def compact_value(value: Any, limit: int = 2000) -> str:
+    """Serialize provider-neutral diagnostic values with a bounded length."""
+    if isinstance(value, str):
+        text = value
+    else:
+        text = json.dumps(value, ensure_ascii=False, sort_keys=True)
+    return text[:limit]

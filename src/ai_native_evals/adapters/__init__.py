@@ -5,6 +5,7 @@ from .codex import CodexAdapter, CodexConfig
 from .codex_events import project_codex_events
 from .dsh_acp import DshAcpAdapter, DshAcpError, DshConfig
 from .events import (
+    compact_value,
     normalize_codex_event,
     normalize_dsh_acp_message,
     normalize_log_file,
@@ -26,4 +27,5 @@ __all__ = [
     "normalize_dsh_acp_message",
     "normalize_log_file",
     "read_normalized_events",
+    "compact_value",
 ]

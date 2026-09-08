@@ -63,7 +63,7 @@ def workspace_file_scorer(relative_path: str, expected_text: str) -> Scorer:
                 "expected_length": len(expected_text),
                 "actual_length": len(actual_text),
                 "agent_run": state.store.get("agent_run"),
-                "codex_event_count": state.store.get("codex_event_count"),
+                "agent_event_count": state.store.get("agent_event_count"),
             },
         )
 

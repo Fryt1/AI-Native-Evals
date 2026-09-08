@@ -11,7 +11,7 @@ from typing import Any
 from inspect_ai.scorer import Score, Scorer, Target, accuracy, scorer
 from inspect_ai.solver import TaskState
 
-from ..adapters.codex_events import _compact
+from ..adapters.events import compact_value
 
 
 def _find_blender() -> str:
@@ -45,13 +45,13 @@ def blender_scene_scorer(
         if error is not None:
             return _fail(
                 "inspect_failed",
-                f"could not inspect scene: {error}; stderr={_compact(completed.stderr)}",
+                f"could not inspect scene: {error}; stderr={compact_value(completed.stderr)}",
             )
 
         details = payload.get("details") if isinstance(payload, dict) else None
         objects = details.get("objects") if isinstance(details, dict) else None
         if not isinstance(objects, list):
-            return _fail("invalid_result", f"inspect returned no objects: {_compact(details)}")
+            return _fail("invalid_result", f"inspect returned no objects: {compact_value(details)}")
 
         if expected_name is not None:
             matches = [
@@ -80,7 +80,7 @@ def blender_scene_scorer(
 
         explanation = (
             f"Blender scene verified: object={obj.get('name')} "
-            f"location={_compact(obj.get('location'))}"
+            f"location={compact_value(obj.get('location'))}"
         )
         return Score(
             value=True,

@@ -22,14 +22,14 @@ from inspect_ai.solver import TaskState
 @scorer(metrics=[accuracy()], name="hello_world_scorer")
 def hello_world_scorer(
     *,
-    relative_path: str = "evidence/hello.txt",
-    expected_text: str = "ai-native-codex-ok",
+    relative_path: str = "output/hello.txt",
+    expected_text: str = "ai-native-agent-ok",
 ) -> Scorer:
     """Check one file in the Agent evidence dir without trusting Agent prose.
 
     Args:
         relative_path: Path relative to the run directory (defaults to the
-            evidence/hello.txt location the codex-file-smoke prompt uses).
+            output/hello.txt location used by a simple file task).
         expected_text: Exact text the file must contain.
     """
 
@@ -85,7 +85,7 @@ def hello_world_scorer(
                 "expected_length": len(expected_text),
                 "actual_length": len(actual_text),
                 "agent_run": state.store.get("agent_run"),
-                "codex_event_count": state.store.get("codex_event_count"),
+                "agent_event_count": state.store.get("agent_event_count"),
             },
         )
 
