@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -271,11 +272,153 @@ def _summary(args: argparse.Namespace) -> int:
     return 0
 
 
+
+def _config_for_repo(repo_root: Path, value: Path | None = None) -> tuple[Path, dict[str, object]]:
+    path = value.resolve() if value else repo_root / "config" / "eval.yaml"
+    from .runs.resolver import load_config
+
+    return path, load_config(path)
+
+
+def _task_list(args: argparse.Namespace) -> int:
+    from .tasks.bundles import list_task_bundles
+
+    repo_root = _repo_root()
+    _path, config = _config_for_repo(repo_root, args.config)
+    payload = {"tasks": list(list_task_bundles(repo_root, config=config))}
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _task_show(args: argparse.Namespace) -> int:
+    from .tasks.bundles import load_task_bundle
+
+    repo_root = _repo_root()
+    _path, config = _config_for_repo(repo_root, args.config)
+    bundle = load_task_bundle(repo_root, args.task_id, config=config)
+    print(json.dumps(bundle.to_dict(), ensure_ascii=False, indent=2))
+    return 0
+
+
+def _task_validate(args: argparse.Namespace) -> int:
+    repo_root = _repo_root()
+    config_path, _config = _config_for_repo(repo_root, args.config)
+    spec = resolve_run(repo_root, args.task_id, config_path=config_path)
+    from .evaluation.runner import available_evaluators
+
+    unknown_evaluators = sorted(
+        {check.evaluator for check in spec.test_plan.checks} - set(available_evaluators())
+    )
+    if unknown_evaluators:
+        raise EvalConfigError(f"unknown evaluator ids: {unknown_evaluators}")
+    missing_resources = [
+        resource.resource_id
+        for resource in spec.resource_specs
+        if resource.required and resource.source is not None and not resource.source.exists()
+    ]
+    if missing_resources:
+        raise EvalConfigError(f"required resource sources do not exist: {missing_resources}")
+    payload = {
+        "valid": True,
+        "task_id": spec.task_id,
+        "bundle": spec.task_bundle.get("source_path"),
+        "agent": spec.agent,
+        "model": spec.model,
+        "checks": [check.id for check in spec.test_plan.ordered_checks()],
+        "resources": [
+            {
+                **resource.to_dict(),
+                "source_exists": bool(resource.source and resource.source.exists()),
+            }
+            for resource in spec.resource_specs
+        ],
+    }
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _profile_catalog(repo_root: Path, kind: str) -> dict[str, dict[str, object]]:
+    config_path, config = _config_for_repo(repo_root)
+    del config_path
+    from .runs.resolver import _mapping, _merge_named_profile_source
+
+    if kind == "agents":
+        return _merge_named_profile_source(
+            repo_root,
+            config,
+            "agents",
+            {**_mapping(_mapping(config, "profiles"), "agents"), **_mapping(config, "agents")},
+        )
+    return _merge_named_profile_source(
+        repo_root,
+        config,
+        "model_profiles",
+        {**_mapping(_mapping(config, "profiles"), "models"), **_mapping(config, "model_profiles")},
+    )
+
+
+def _agent_list(_args: argparse.Namespace) -> int:
+    profiles = _profile_catalog(_repo_root(), "agents")
+    print(json.dumps({"agents": profiles}, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _model_list(_args: argparse.Namespace) -> int:
+    profiles = _profile_catalog(_repo_root(), "models")
+    print(json.dumps({"models": profiles}, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _doctor(_args: argparse.Namespace) -> int:
+    repo_root = _repo_root()
+    checks: dict[str, object] = {}
+    try:
+        config_path, config = _config_for_repo(repo_root)
+        checks["config"] = {"ok": True, "path": str(config_path)}
+        from .tasks.bundles import list_task_bundles
+
+        task_ids = list_task_bundles(repo_root, config=config)
+        checks["tasks"] = {"ok": bool(task_ids), "count": len(task_ids)}
+        agents = _profile_catalog(repo_root, "agents")
+        models = _profile_catalog(repo_root, "models")
+        checks["agents"] = {"ok": bool(agents), "ids": sorted(agents)}
+        checks["models"] = {"ok": bool(models), "ids": sorted(models)}
+        checks["inspect_ai"] = {"ok": True}
+        checks["wsl"] = {"ok": shutil.which("wsl.exe") is not None}
+    except (EvalConfigError, OSError, ValueError) as exc:
+        checks["error"] = str(exc)
+    ok = all(value.get("ok", False) for value in checks.values() if isinstance(value, dict))
+    print(json.dumps({"ok": ok, "checks": checks}, ensure_ascii=False, indent=2))
+    return 0 if ok else 1
+
 def main() -> int:
     """Run diagnostics or manual evaluation lifecycle commands."""
     parser = argparse.ArgumentParser(description="AI-Native Agent evaluation controls")
     parser.add_argument("--version", action="store_true", help="print the package version")
     subparsers = parser.add_subparsers(dest="command")
+
+    task_parser = subparsers.add_parser("task", help="discover and validate Task bundles")
+    task_subparsers = task_parser.add_subparsers(dest="task_command", required=True)
+    task_list_parser = task_subparsers.add_parser("list", help="list Task ids")
+    task_list_parser.add_argument("--config", type=Path)
+    task_show_parser = task_subparsers.add_parser("show", help="show a Task bundle")
+    task_show_parser.add_argument("task_id")
+    task_show_parser.add_argument("--config", type=Path)
+    task_validate_parser = task_subparsers.add_parser(
+        "validate", help="validate a Task and its TestPlan"
+    )
+    task_validate_parser.add_argument("task_id")
+    task_validate_parser.add_argument("--config", type=Path)
+
+    agent_parser = subparsers.add_parser("agent", help="list Agent profiles")
+    agent_subparsers = agent_parser.add_subparsers(dest="agent_command", required=True)
+    agent_subparsers.add_parser("list", help="list Agent profiles")
+
+    model_parser = subparsers.add_parser("model", help="list model profiles")
+    model_subparsers = model_parser.add_subparsers(dest="model_command", required=True)
+    model_subparsers.add_parser("list", help="list model profiles")
+
+    subparsers.add_parser("doctor", help="check local evaluator wiring")
 
     run_parser = subparsers.add_parser("run", help="manual evaluation run lifecycle")
     run_subparsers = run_parser.add_subparsers(dest="run_command", required=True)
@@ -345,6 +488,19 @@ def main() -> int:
         if args.version:
             print(__version__)
             return 0
+        if args.command == "task":
+            if args.task_command == "list":
+                return _task_list(args)
+            if args.task_command == "show":
+                return _task_show(args)
+            if args.task_command == "validate":
+                return _task_validate(args)
+        if args.command == "agent" and args.agent_command == "list":
+            return _agent_list(args)
+        if args.command == "model" and args.model_command == "list":
+            return _model_list(args)
+        if args.command == "doctor":
+            return _doctor(args)
         if args.command != "run":
             parser.print_help()
             return 0

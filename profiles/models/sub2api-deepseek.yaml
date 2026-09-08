@@ -1,0 +1,5 @@
+id: sub2api-deepseek
+provider: eval
+model: deepseek/deepseek-v4-flash
+protocol: responses
+reasoning_effort: high

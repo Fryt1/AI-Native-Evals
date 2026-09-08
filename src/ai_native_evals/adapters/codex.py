@@ -1,4 +1,4 @@
-"""External Agent launch adapters."""
+"""Codex process adapter behind the provider-neutral Agent seam."""
 
 from __future__ import annotations
 
@@ -10,8 +10,13 @@ import subprocess
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ..contracts import AgentLaunchSpec, AgentRunResult, AgentRunStatus
+from .events import normalize_log_file
+
+if TYPE_CHECKING:
+    from ..agents.profile import AgentProfile
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,9 +29,23 @@ class CodexConfig:
     ephemeral: bool = True
     skip_git_repo_check: bool = True
 
+    @classmethod
+    def from_profile(cls, profile: AgentProfile) -> CodexConfig:
+        """Project profile options into Codex-only flags at the adapter seam."""
+        options = profile.options
+        return cls(
+            executable=str(options.get("executable", "codex")),
+            sandbox=str(options.get("sandbox", "workspace-write")),
+            ask_for_approval=str(options.get("ask_for_approval", "never")),
+            ephemeral=bool(options.get("ephemeral", True)),
+            skip_git_repo_check=bool(options.get("skip_git_repo_check", True)),
+        )
+
 
 class CodexAdapter:
-    """Run Codex CLI in an isolated directory and persist its process outputs."""
+    """Run Codex locally and persist raw plus normalized execution evidence."""
+
+    adapter_id = "codex"
 
     def __init__(self, config: CodexConfig | None = None) -> None:
         self.config = config or CodexConfig()
@@ -63,7 +82,7 @@ class CodexAdapter:
         command.extend(
             [
                 "--cd",
-                str(spec.run_dir),
+                str(spec.workspace_dir or spec.run_dir),
                 "--output-last-message",
                 str(last_message_path),
                 spec.task_text,
@@ -75,10 +94,15 @@ class CodexAdapter:
         """Run Codex and persist JSONL events, stderr, last message, and manifest."""
         run_dir = spec.run_dir.resolve()
         run_dir.mkdir(parents=True, exist_ok=True)
-        events_path = run_dir / "codex-events.jsonl"
-        stderr_path = run_dir / "codex-stderr.log"
-        last_message_path = run_dir / "codex-last-message.txt"
-        manifest_path = run_dir / "run-manifest.json"
+        events_path = _option_path(spec, "events_path", run_dir / "codex-events.jsonl")
+        stderr_path = _option_path(spec, "stderr_path", run_dir / "codex-stderr.log")
+        last_message_path = _option_path(
+            spec, "last_message_path", run_dir / "codex-last-message.txt"
+        )
+        normalized_events_path = _option_path(
+            spec, "normalized_events_path", run_dir / "normalized-events.jsonl"
+        )
+        manifest_path = run_dir / "agent-run.json"
         started = _utc_now()
         exit_code: int | None = None
         status: AgentRunStatus = "failed"
@@ -89,10 +113,14 @@ class CodexAdapter:
         try:
             command = self.build_command(spec, last_message_path)
             environment = os.environ.copy()
-            environment.update(spec.environment)
+            environment.update({str(key): str(value) for key, value in spec.environment.items()})
+            if spec.model:
+                environment.setdefault("EVAL_MODEL", spec.model)
+            if spec.reasoning_effort:
+                environment.setdefault("EVAL_REASONING_EFFORT", spec.reasoning_effort)
             process = await asyncio.create_subprocess_exec(
                 *command,
-                cwd=str(run_dir),
+                cwd=str(spec.workspace_dir or run_dir),
                 env=environment,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -119,8 +147,17 @@ class CodexAdapter:
             failure_message = str(exc)
             stderr_text = str(exc)
 
+        events_path.parent.mkdir(parents=True, exist_ok=True)
+        stderr_path.parent.mkdir(parents=True, exist_ok=True)
         events_path.write_text(stdout_text, encoding="utf-8")
         stderr_path.write_text(stderr_text, encoding="utf-8")
+        normalize_log_file(
+            events_path,
+            normalized_events_path,
+            adapter=self.adapter_id,
+            agent_id=spec.agent_id,
+        )
+        _write_legacy_aliases(run_dir, events_path, last_message_path)
         finished = _utc_now()
         result = AgentRunResult(
             agent_id=spec.agent_id,
@@ -136,12 +173,32 @@ class CodexAdapter:
             manifest_path=manifest_path,
             model=spec.model,
             failure_message=failure_message,
+            normalized_events_path=normalized_events_path,
+            adapter=self.adapter_id,
+            protocol=spec.protocol,
         )
         manifest_path.write_text(
             json.dumps(result.to_dict(), ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
         return result
+
+
+def _option_path(spec: AgentLaunchSpec, key: str, default: Path) -> Path:
+    value = spec.options.get(key)
+    return Path(str(value)).resolve() if value else default
+
+
+def _write_legacy_aliases(run_dir: Path, events_path: Path, last_message_path: Path) -> None:
+    """Keep the old filenames readable while the canonical names evolve."""
+    if events_path.name != "codex-events.jsonl":
+        (run_dir / "codex-events.jsonl").write_text(
+            events_path.read_text(encoding="utf-8", errors="replace"), encoding="utf-8"
+        )
+    if last_message_path.is_file() and last_message_path.name != "codex-last-message.txt":
+        (run_dir / "codex-last-message.txt").write_text(
+            last_message_path.read_text(encoding="utf-8", errors="replace"), encoding="utf-8"
+        )
 
 
 async def _terminate_process_tree(pid: int) -> None:

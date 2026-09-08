@@ -137,7 +137,22 @@ def wait_docker_run(run_dir: Path, *, wsl_distro: str | None = None) -> dict[str
     log_text = _container_logs(distro, str(runtime["agent_container"]))
     trace_dir = Path(manifest["paths"]["trace"])
     trace_dir.mkdir(parents=True, exist_ok=True)
-    (trace_dir / "agent-container.log").write_text(log_text, encoding="utf-8")
+    log_path = trace_dir / "agent-container.log"
+    log_path.write_text(log_text, encoding="utf-8")
+    try:
+        from ..adapters.events import normalize_log_file
+
+        profile = manifest.get("run", {}).get("agent_profile", {})
+        adapter = profile.get("adapter") if isinstance(profile, dict) else None
+        normalize_log_file(
+            log_path,
+            trace_dir / "normalized-events.jsonl",
+            adapter=str(adapter or manifest.get("run", {}).get("agent", "codex")),
+            agent_id=str(manifest.get("run", {}).get("agent", "agent")),
+        )
+    except Exception:
+        # Normalization is observability; it must never mask the Agent exit code.
+        pass
     # Digest generation is best-effort telemetry; it must never mask the Agent
     # exit code or prevent Docker resource cleanup.
     try:
@@ -239,9 +254,23 @@ def _agent_run_args(
     gateway_key: str,
     image: str,
 ) -> list[str]:
+    """Build a provider-neutral Agent container command from the run profile."""
     run = _run_metadata(manifest)
     paths = manifest["paths"]
     sandbox = _sandbox_metadata(run)
+    profile = run.get("agent_profile") if isinstance(run.get("agent_profile"), dict) else {}
+    legacy_profile = not bool(profile)
+    workdir = str(
+        profile.get("workdir")
+        or ("/workspace/game-engine" if legacy_profile else "/workspace")
+    )
+    adapter = str(profile.get("adapter") or run.get("agent", "codex"))
+    profile_id = str(profile.get("id") or run.get("agent", adapter))
+    writable_paths = profile.get("writable_paths", [])
+    if not isinstance(writable_paths, list):
+        writable_paths = []
+    if not writable_paths and legacy_profile:
+        writable_paths = ["/opt/codex-home"]
     args = [
         "run",
         "--detach",
@@ -249,25 +278,37 @@ def _agent_run_args(
         runtime["agent_container"],
         "--network",
         runtime["network"],
-        *_container_security_args(sandbox, agent=True),
+        *_container_security_args(sandbox, agent=True, writable_paths=writable_paths),
         "--add-host",
         f"host.docker.internal:{_resolve_wsl_host_ip(str(sandbox.get('distro', 'Ubuntu-20.04')))}",
         "--workdir",
-        "/workspace/game-engine",
+        workdir,
         "--env",
         f"EVAL_GATEWAY_API_KEY={gateway_key}",
         "--env",
         "EVAL_GATEWAY_URL=http://llm-gateway:8080/v1",
         "--env",
-        f"EVAL_MODEL={run['model']}",
+        f"EVAL_MODEL={run.get('model', '')}",
         "--env",
-        f"EVAL_WIRE_API={run['protocol']}",
+        f"EVAL_MODEL_PROVIDER={run.get('model_provider') or 'eval'}",
+        "--env",
+        f"EVAL_WIRE_API={run.get('protocol', 'responses')}",
         "--env",
         f"EVAL_REASONING_EFFORT={run.get('reasoning_effort') or 'high'}",
         "--env",
-        f"BLENDER_MCP_HOST={run.get('mcp_host', 'host.docker.internal')}",
+        f"EVAL_AGENT_ID={run.get('agent', profile_id)}",
         "--env",
-        f"BLENDER_MCP_PORT={run.get('mcp_port', 9876)}",
+        f"EVAL_AGENT_ADAPTER={adapter}",
+        "--env",
+        f"EVAL_AGENT_PROFILE={profile_id}",
+        "--env",
+        f"EVAL_WORKDIR={workdir}",
+        "--env",
+        "EVAL_TRACE_DIR=/workspace/trace",
+        "--env",
+        "EVAL_LAST_MESSAGE_PATH=/workspace/trace/agent-last-message.txt",
+        "--env",
+        "EVAL_OUTER_SANDBOX=docker",
         "--env",
         "HOME=/tmp/home",
         "--env",
@@ -275,21 +316,55 @@ def _agent_run_args(
         "--env",
         "EVAL_DSH_MCP_SERVERS_FILE=/run-config/dsh-mcp-servers.json",
         "--env",
+        "EVAL_AGENT_PROFILE_FILE=/run-config/agent-profile.json",
+        "--env",
+        "EVAL_SYSTEM_PROMPT_FILE=/run-config/agent-system-prompt.txt",
+        "--env",
         f"EVAL_RUN_ID={run['run_id']}",
         "--env",
         f"EVAL_TASK_ID={run['task_id']}",
     ]
+    for key, value in (profile.get("environment") or {}).items():
+        args.extend(["--env", f"{key}={_render_runtime_value(str(value), run, workdir)}"])
 
-    # One bind mount is the canonical per-run execution workspace. It keeps
-    # project, output, evidence, trace, and evaluator state in one persisted
-    # host directory that later read-only evaluators can reuse.
     _mount(args, Path(paths["workspace"]), "/workspace")
     agent_config = paths.get("agent_config")
     if agent_config and Path(agent_config).is_dir():
         _mount(args, Path(agent_config), "/run-config", readonly=True)
 
-    args.extend([image, str(run["task_prompt"])])
+    command = profile.get("command", [])
+    if isinstance(command, str):
+        command = [command]
+    if not isinstance(command, list):
+        command = []
+    rendered_command = [
+        _render_runtime_value(str(value), run, workdir)
+        for value in command
+    ]
+    if not rendered_command:
+        rendered_command = [str(run["task_prompt"])]
+    elif "${TASK_PROMPT}" not in command:
+        rendered_command.append(str(run["task_prompt"]))
+    entrypoint = profile.get("entrypoint")
+    if isinstance(entrypoint, str) and entrypoint:
+        args.extend(["--entrypoint", entrypoint])
+    args.extend([image, *rendered_command])
     return args
+
+
+def _render_runtime_value(value: str, run: dict[str, Any], workdir: str) -> str:
+    """Resolve only non-secret run placeholders in a profile command/env."""
+    return (
+        value.replace("${TASK_PROMPT}", str(run.get("task_prompt", "")))
+        .replace("${TASK_ID}", str(run.get("task_id", "")))
+        .replace("${RUN_ID}", str(run.get("run_id", "")))
+        .replace("${WORKDIR}", workdir)
+        .replace("${MODEL}", str(run.get("model", "")))
+        .replace("${MODEL_PROVIDER}", str(run.get("model_provider", "")))
+        .replace("${REASONING_EFFORT}", str(run.get("reasoning_effort", "")))
+        .replace("${MCP_CONFIG}", "/run-config/mcp-servers.json")
+        .replace("${DSH_MCP_CONFIG}", "/run-config/dsh-mcp-servers.json")
+    )
 
 
 def _mount(args: list[str], source: Path, target: str, *, readonly: bool = False) -> None:
@@ -319,8 +394,9 @@ def _sandbox_metadata(run: dict[str, Any]) -> dict[str, Any]:
 
 
 def _container_security_args(
-    sandbox: dict[str, Any], *, agent: bool = False
+    sandbox: dict[str, Any], *, agent: bool = False, writable_paths: list[str] | None = None
 ) -> list[str]:
+    """Return common container isolation flags without naming an Agent."""
     args = ["--cap-drop", "ALL", "--security-opt", "no-new-privileges:true"]
     pids_limit = sandbox.get("pids_limit")
     if pids_limit is not None:
@@ -331,12 +407,15 @@ def _container_security_args(
     if bool(sandbox.get("read_only_root", True)):
         args.extend(["--read-only", "--tmpfs", "/tmp:rw,nosuid,nodev,size=64m"])
         if agent:
-            args.extend(
-                [
-                    "--tmpfs",
-                    "/opt/codex-home:rw,nosuid,nodev,size=128m,uid=1000,gid=1000,mode=700",
-                ]
-            )
+            for path in writable_paths or []:
+                safe_path = str(path).strip()
+                if safe_path:
+                    args.extend(
+                        [
+                            "--tmpfs",
+                            f"{safe_path}:rw,nosuid,nodev,size=128m,uid=1000,gid=1000,mode=700",
+                        ]
+                    )
     return args
 
 

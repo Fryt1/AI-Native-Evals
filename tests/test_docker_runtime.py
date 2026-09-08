@@ -90,3 +90,31 @@ def test_start_docker_run_records_runtime_without_calling_docker(
     assert any("ai-native-llm-gateway:local" in command for command in commands)
     assert any("test-agent" in command for command in commands)
     assert load_manifest(run_dir)["runtime"]["status"] == "running"
+
+
+def test_agent_profile_controls_entrypoint_and_command_without_codex_branch(tmp_path: Path) -> None:
+    manifest = _manifest(tmp_path)
+    manifest["run"]["agent"] = "dsh"
+    manifest["run"]["agent_profile"] = {
+        "id": "dsh",
+        "adapter": "dsh-acp",
+        "image": "test-dsh",
+        "workdir": "/workspace",
+        "entrypoint": "node",
+        "command": ["/run-config/dsh-acp-runner.mjs", "${TASK_PROMPT}"],
+        "writable_paths": ["/tmp/dsh-home"],
+    }
+    args = _agent_run_args(
+        manifest,
+        {"network": "eval-net", "agent_container": "eval-agent"},
+        gateway_key="gateway-key",
+        image="test-dsh",
+    )
+
+    assert args[args.index("--entrypoint") + 1] == "node"
+    assert "/tmp/dsh-home:rw" in " ".join(args)
+    image_index = args.index("test-dsh")
+    assert args[image_index + 1 :] == [
+        "/run-config/dsh-acp-runner.mjs",
+        "Create a cube through Blender MCP.",
+    ]

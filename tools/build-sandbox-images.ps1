@@ -5,7 +5,10 @@ param(
     [Alias("IncludeAllMcp")]
     [switch]$IncludeBlenderMcp,
     [switch]$Offline,
+    [switch]$IncludeDsh,
+    [switch]$IncludeDshRelease,
     [string]$CodexVersion = "0.153.4",
+    [string]$DshVersion = "0.1.2-rc.1",
     [string]$PythonBaseImage = "python:3.12-slim",
     [string]$NodeBaseImage = "node:22-bookworm",
     [string]$NpmRegistry = "https://registry.npmmirror.com",
@@ -114,4 +117,59 @@ $agentArgs += $WslRoot
 
 Write-Host "Building Codex sandbox image ($agentTag)..."
 Invoke-Docker $agentArgs
+
+if ($IncludeDsh) {
+    $DshRootWindows = (Resolve-Path (Join-Path $RepoRoot "..\dsh")).Path
+    $DshDrive = $DshRootWindows.Substring(0, 1).ToLowerInvariant()
+    $DshRelative = $DshRootWindows.Substring(2).Replace("\", "/")
+    $DshRoot = "/mnt/$DshDrive$DshRelative"
+    $DshCommit = (& git -C $DshRootWindows rev-parse --verify HEAD).Trim()
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($DshCommit)) {
+        throw "Could not resolve the DSH repository commit: $DshRootWindows"
+    }
+    $dshDockerIgnore = Join-Path $DshRootWindows ".dockerignore"
+    $createdDshDockerIgnore = $false
+    try {
+        if (-not (Test-Path -LiteralPath $dshDockerIgnore -PathType Leaf)) {
+            $ignoreLines = @(
+                ".git", ".github", "node_modules", "website", "snapshots", "docs",
+                "**/tests", "**/test", "**/*.spec.ts", "**/*.test.ts",
+                "**/coverage", "**/dist", "**/lib"
+            )
+            $ignoreLines | Set-Content -LiteralPath $dshDockerIgnore -Encoding utf8
+            $createdDshDockerIgnore = $true
+        }
+        $dshArgs = @(
+            "build", "--pull=false",
+            "-f", "$WslRoot/docker/dsh-agent/Dockerfile",
+            "--build-arg", "NODE_BASE_IMAGE=$NodeBaseImage",
+            "--build-arg", "NPM_REGISTRY=$NpmRegistry",
+            "--build-arg", "DSH_COMMIT=$DshCommit",
+            "-t", "ai-native-dsh-agent:local",
+            $DshRoot
+        )
+        Write-Host "Building DSH ACP sandbox image (commit $DshCommit)..."
+        Invoke-Docker $dshArgs
+    }
+    finally {
+        if ($createdDshDockerIgnore) {
+            Remove-Item -LiteralPath $dshDockerIgnore -Force
+        }
+    }
+}
+
+if ($IncludeDshRelease) {
+    $dshReleaseArgs = @(
+        "build", "--pull=false",
+        "-f", "$WslRoot/docker/dsh-agent/Dockerfile.release",
+        "--build-arg", "NODE_BASE_IMAGE=$NodeBaseImage",
+        "--build-arg", "NPM_REGISTRY=$NpmRegistry",
+        "--build-arg", "DSH_VERSION=$DshVersion",
+        "-t", "ai-native-dsh-agent:release",
+        $WslRoot
+    )
+    Write-Host "Building DSH release ACP sandbox image..."
+    Invoke-Docker $dshReleaseArgs
+}
+
 Write-Host "Sandbox images are ready."

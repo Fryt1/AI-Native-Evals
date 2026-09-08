@@ -2,7 +2,8 @@
 
 A Task is a scenario; its tests are a `TestPlan` made of typed `CheckSpec`
 entries. The plan is data, while reusable evaluator implementations remain
-code-owned components.
+code-owned modules. New plans live in `tasks/<task-id>/task.yaml`; inline
+`config/eval.yaml.tasks` remains a compatibility format only.
 
 ```text
 Task
@@ -32,6 +33,7 @@ returns a stable topological order.
 ## Example
 
 ```yaml
+# tasks/my-task/task.yaml
 test_plan:
   version: 1
   checks:

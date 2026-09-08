@@ -148,8 +148,11 @@ def test_dsh_projection_uses_standard_acp_mcp_shape() -> None:
         }
     )
 
-    assert projected[0]["transport"] == "streamable-http"
-    assert projected[0]["serverName"] == "unreal-mcp"
-    assert projected[0]["toolCallTimeoutMs"] == 12_000
-    assert projected[1]["transport"] == "stdio"
+    assert projected[0]["type"] == "http"
+    assert projected[0]["name"] == "unreal-mcp"
+    assert projected[0]["url"] == "http://host.docker.internal:8000/mcp"
+    assert projected[1]["name"] == "comfyui"
     assert projected[1]["args"] == ["--stdio"]
+    assert projected[1]["env"] == [
+        {"name": "COMFYUI_URL", "value": "http://host.docker.internal:8188"}
+    ]

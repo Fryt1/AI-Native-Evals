@@ -1,0 +1,31 @@
+id: roundtrip-blender-ue5
+version: 1
+prompt_file: prompt.md
+resources:
+- id: game-engine
+  kind: repository
+  source: game_engine
+  mount: game-engine
+execution:
+  agent: codex-dcc
+  mcp_profile: blender-ue5-host
+verify:
+  blender_scene: roundtrip.blend
+  blender_objects:
+  - name: RoundtripCube
+    type: MESH
+    location:
+    - 0.0
+    - 0.0
+    - 1.0
+  ue5:
+    actor_label: RoundtripActor
+    location:
+      x: 0.0
+      y: 0.0
+      z: 100.0
+    expected_components:
+    - StaticMeshComponent0
+    - RoundtripMesh
+    mesh_ref: /Engine/BasicShapes/Cube.Cube
+    mesh_component: RoundtripMesh

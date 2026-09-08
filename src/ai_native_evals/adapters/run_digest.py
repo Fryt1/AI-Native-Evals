@@ -21,6 +21,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from .events import read_normalized_events
+
 
 class DigestError(RuntimeError):
     """Raised when a run directory cannot be digested."""
@@ -65,9 +67,13 @@ def digest_run(run_dir: str | Path) -> dict[str, Any]:
     paths = manifest.get("paths", {})
     trace_path = Path(paths.get("trace", run_dir / "trace"))
     log_path = trace_path / "agent-container.log"
+    normalized_path = trace_path / "normalized-events.jsonl"
+    if not normalized_path.is_file():
+        normalized_path = run_dir / "normalized-events.jsonl"
 
     started_at = (run.get("created_at") or "").replace("+00:00", "Z")
     events = list(_iter_log_events(log_path)) if log_path.is_file() else []
+    normalized_events = read_normalized_events(normalized_path)
     completed = [
         ev.get("item", {})
         for ev in events
@@ -78,30 +84,90 @@ def digest_run(run_dir: str | Path) -> dict[str, Any]:
     by_kind: Counter[str] = Counter()
     mcp_calls: list[dict[str, Any]] = []
     shell_commands: list[dict[str, Any]] = []
+    generic_tool_calls: list[dict[str, Any]] = []
     reads: list[dict[str, Any]] = []
     agent_messages: list[dict[str, Any]] = []
     reasoning_blocks: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
 
-    for item in completed:
-        kind = item.get("type", "?")
-        by_kind[kind] += 1
-        if kind == "mcp_tool_call":
-            mcp_calls.append(item)
-        elif kind == "command_execution":
-            shell_commands.append(item)
-        elif kind == "file_read" or kind == "text_read":
-            reads.append(item)
-        elif kind == "agent_message":
-            agent_messages.append(item)
-        elif kind == "reasoning":
-            reasoning_blocks.append(item)
-        elif kind == "error":
-            errors.append(item)
-
+    if normalized_events:
+        completed_command_ids = {
+            _normalized_event_id(event)
+            for event in normalized_events
+            if event.get("type") == "command_completed"
+        }
+        failed_normalized_ids = {
+            _normalized_event_id(event)
+            for event in normalized_events
+            if event.get("type") in {"tool_result", "command_completed"}
+            and _normalized_event_failed(event)
+        }
+        for event in normalized_events:
+            event_type = str(event.get("type", "provider_event"))
+            by_kind[event_type] += 1
+            payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+            raw_item = payload.get("item")
+            item = dict(raw_item) if isinstance(raw_item, dict) else {}
+            update = payload.get("update")
+            if isinstance(update, dict):
+                item = {**item, **update}
+            event_id = _normalized_event_id(event)
+            if event_type == "command_started" and event_id in completed_command_ids:
+                continue
+            if event_type == "tool_call":
+                item.setdefault("type", "mcp_tool_call")
+                if _normalized_is_mcp(event):
+                    mcp_calls.append(item)
+                elif _normalized_is_shell(event):
+                    shell_commands.append(item)
+                else:
+                    generic_tool_calls.append(item)
+            elif event_type == "command_completed":
+                item.setdefault("type", "command_execution")
+                shell_commands.append(item)
+            elif event_type == "tool_result":
+                # Results are correlated by id below and are not a second call.
+                continue
+            elif event_type == "command_started":
+                item.setdefault("type", "command_execution")
+                shell_commands.append(item)
+            elif event_type == "agent_message":
+                text = item.get("text")
+                content = item.get("content")
+                if not text and isinstance(content, dict):
+                    text = content.get("text", "")
+                item["text"] = text or ""
+                agent_messages.append(item)
+            elif event_type == "reasoning":
+                reasoning_blocks.append(item)
+            elif event_type == "error":
+                errors.append(item)
+    else:
+        failed_normalized_ids = set()
+        for item in completed:
+            kind = item.get("type", "?")
+            by_kind[kind] += 1
+            if kind == "mcp_tool_call":
+                mcp_calls.append(item)
+            elif kind == "command_execution":
+                shell_commands.append(item)
+            elif kind == "file_read" or kind == "text_read":
+                reads.append(item)
+            elif kind == "agent_message":
+                agent_messages.append(item)
+            elif kind == "reasoning":
+                reasoning_blocks.append(item)
+            elif kind == "error":
+                errors.append(item)
     # ---- MCP stats ----
     mcp_total = len(mcp_calls)
-    mcp_failed = [c for c in mcp_calls if c.get("status") == "failed" or c.get("error")]
+    mcp_failed = [
+        c
+        for c in mcp_calls
+        if c.get("status") == "failed"
+        or c.get("error")
+        or str(c.get("id", "")) in failed_normalized_ids
+    ]
     mcp_server_totals: Counter[str] = Counter()
     mcp_server_failed: Counter[str] = Counter()
     mcp_tool_totals: Counter[str] = Counter()
@@ -136,7 +202,20 @@ def digest_run(run_dir: str | Path) -> dict[str, Any]:
             )
 
     shell_total = len(shell_commands)
-    shell_failed = [c for c in shell_commands if c.get("exit_code") not in (0, None)]
+    shell_failed = [
+        c
+        for c in shell_commands
+        if c.get("exit_code") not in (0, None)
+        or str(c.get("id", "")) in failed_normalized_ids
+        or str(c.get("toolCallId", "")) in failed_normalized_ids
+    ]
+    tool_total = len(generic_tool_calls)
+    tool_failed = [
+        c
+        for c in generic_tool_calls
+        if str(c.get("id", "")) in failed_normalized_ids
+        or str(c.get("toolCallId", "")) in failed_normalized_ids
+    ]
     # ---- time spent: classify shell commands as doc-reading vs action ----
     reading_cmds = [
         c for c in shell_commands if _is_doc_command(str(c.get("command", "")))
@@ -176,24 +255,27 @@ def digest_run(run_dir: str | Path) -> dict[str, Any]:
         except DigestError:
             evaluation = {"decision": None, "path": str(evaluation_path), "error": "unparseable"}
 
-    timeline = [
-        {
-            "kind": it.get("type"),
-            "server": it.get("server"),
-            "tool": (
-                f"call_tool:{it.get('arguments', {}).get('tool_name')}"
-                if it.get("tool") == "call_tool" and isinstance(it.get("arguments"), dict)
-                and it.get("arguments", {}).get("tool_name")
-                else it.get("tool")
-            ),
-            "command": _truncate(str(it.get("command", "")), 180),
-            "text": _truncate(str(it.get("text", "")), 180),
-            "status": it.get("status"),
-            "exit_code": it.get("exit_code"),
-            "error": _truncate(str(it.get("error", "")), 200),
-        }
-        for it in completed
-    ]
+    if normalized_events:
+        timeline = [_normalized_timeline(event) for event in normalized_events]
+    else:
+        timeline = [
+            {
+                "kind": it.get("type"),
+                "server": it.get("server"),
+                "tool": (
+                    f"call_tool:{it.get('arguments', {}).get('tool_name')}"
+                    if it.get("tool") == "call_tool" and isinstance(it.get("arguments"), dict)
+                    and it.get("arguments", {}).get("tool_name")
+                    else it.get("tool")
+                ),
+                "command": _truncate(str(it.get("command", "")), 180),
+                "text": _truncate(str(it.get("text", "")), 180),
+                "status": it.get("status"),
+                "exit_code": it.get("exit_code"),
+                "error": _truncate(str(it.get("error", "")), 200),
+            }
+            for it in completed
+        ]
 
     return {
         "run_id": str(run.get("run_id", run_dir.name)),
@@ -207,6 +289,7 @@ def digest_run(run_dir: str | Path) -> dict[str, Any]:
         "paths": {
             "run_dir": str(run_dir),
             "log": str(log_path),
+            "normalized_events": str(normalized_path),
             "manifest": str(manifest_path),
             "evidence": str(Path(paths.get("evidence", run_dir / "evidence"))),
         },
@@ -227,6 +310,10 @@ def digest_run(run_dir: str | Path) -> dict[str, Any]:
             "mcp_failed_by_tool": dict(mcp_tool_failed),
             "shell_commands_total": shell_total,
             "shell_commands_failed": len(shell_failed),
+            "tool_calls_total": tool_total,
+            "tool_calls_failed": len(tool_failed),
+            "actions_total": mcp_total + shell_total + tool_total,
+            "actions_failed": len(mcp_failed) + len(shell_failed) + len(tool_failed),
             "doc_reading_commands": len(reading_cmds),
             "action_commands": len(action_cmds),
             "agent_messages": len(agent_messages),
@@ -248,6 +335,68 @@ def digest_run(run_dir: str | Path) -> dict[str, Any]:
         "timeline": timeline,
     }
 
+
+def _normalized_payload(event: Mapping[str, Any]) -> Mapping[str, Any]:
+    payload = event.get("payload")
+    return payload if isinstance(payload, Mapping) else {}
+
+
+def _normalized_value(event: Mapping[str, Any]) -> Mapping[str, Any]:
+    payload = _normalized_payload(event)
+    item = payload.get("item") if isinstance(payload.get("item"), Mapping) else {}
+    update = payload.get("update") if isinstance(payload.get("update"), Mapping) else {}
+    return {**item, **update}
+
+
+def _normalized_event_id(event: Mapping[str, Any]) -> str:
+    value = _normalized_value(event)
+    return str(value.get("id") or value.get("toolCallId") or event.get("seq", ""))
+
+
+def _normalized_is_mcp(event: Mapping[str, Any]) -> bool:
+    payload = _normalized_payload(event)
+    value = _normalized_value(event)
+    item = payload.get("item")
+    if isinstance(item, Mapping) and item.get("type") == "mcp_tool_call":
+        return True
+    return any(value.get(key) for key in ("server", "serverName", "mcp_server"))
+
+
+def _normalized_is_shell(event: Mapping[str, Any]) -> bool:
+    if event.get("type") in {"command_started", "command_completed"}:
+        return True
+    value = _normalized_value(event)
+    title = str(value.get("title", value.get("tool", ""))).lower()
+    return title in {"bash", "pwsh", "shell", "terminal"} or bool(value.get("command"))
+
+
+def _normalized_event_failed(event: Mapping[str, Any]) -> bool:
+    value = _normalized_value(event)
+    status = str(value.get("status", "")).lower()
+    return bool(value.get("error")) or status in {"failed", "error"} or (
+        value.get("exit_code") not in (None, 0)
+    )
+
+
+def _normalized_timeline(event: Mapping[str, Any]) -> dict[str, Any]:
+    payload = event.get("payload") if isinstance(event.get("payload"), Mapping) else {}
+    update = payload.get("update") if isinstance(payload.get("update"), Mapping) else {}
+    item = payload.get("item") if isinstance(payload.get("item"), Mapping) else {}
+    value = {**item, **update}
+    content = value.get("content")
+    text = value.get("text", "")
+    if not text and isinstance(content, Mapping):
+        text = content.get("text", "")
+    return {
+        "kind": event.get("type"),
+        "server": value.get("server"),
+        "tool": value.get("tool", value.get("name")),
+        "command": _truncate(str(value.get("command", "")), 180),
+        "text": _truncate(str(text), 180),
+        "status": value.get("status"),
+        "exit_code": value.get("exit_code"),
+        "error": _truncate(str(value.get("error", "")), 200),
+    }
 
 def _is_doc_command(command: str) -> bool:
     lowered = command.lower()

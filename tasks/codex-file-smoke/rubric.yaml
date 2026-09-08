@@ -1,0 +1,5 @@
+criteria:
+  - id: exact_content
+    description: The artifact contains exactly the required text and no extra content.
+    weight: 1.0
+passing_score: 0.8

@@ -1,27 +1,31 @@
-"""Load the small user-facing eval.yaml and resolve a RunSpec."""
+"""Load user-facing configuration and resolve one independent Task/Agent run."""
 
 from __future__ import annotations
 
 import copy
+from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 import yaml
 
+from ..agents import AgentProfile
 from ..plans import TestPlan
+from ..tasks.bundles import TaskBundleError, load_task_bundle
 from .spec import RunSpec
 
 
 class EvalConfigError(ValueError):
-    """Raised when eval.yaml cannot produce a valid run."""
+    """Raised when eval.yaml or a referenced profile cannot produce a valid run."""
 
 
 def load_config(path: Path) -> dict[str, Any]:
     """Load an evaluation YAML config."""
     try:
         value = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except OSError as exc:
+    except (OSError, yaml.YAMLError) as exc:
         raise EvalConfigError(f"could not read config {path}: {exc}") from exc
     if not isinstance(value, dict):
         raise EvalConfigError("evaluation config must be a YAML object")
@@ -40,77 +44,129 @@ def resolve_run(
     mcp_profile: str | None = None,
 ) -> RunSpec:
     """Resolve defaults and command-line overrides into one RunSpec."""
-    del game_engine_ref, dsh_ref  # Refs are consumed by snapshot creation.
     config_path = config_path or repo_root / "config" / "eval.yaml"
     config = load_config(config_path)
     defaults = _mapping(config, "defaults")
     paths = _mapping(config, "paths")
-    agents = _mapping(config, "agents")
-    profiles = _mapping(config, "model_profiles")
+    profiles_config = _mapping(config, "profiles")
+    agents = _merge_named_profile_source(
+        repo_root,
+        config,
+        "agents",
+        {**_mapping(profiles_config, "agents"), **_mapping(config, "agents")},
+    )
+    model_profiles = _merge_named_profile_source(
+        repo_root,
+        config,
+        "model_profiles",
+        {**_mapping(profiles_config, "models"), **_mapping(config, "model_profiles")},
+    )
     mcp_profiles = _mapping(config, "mcp_profiles")
-    tasks = _mapping(config, "tasks")
     sandbox_config = _mapping(config, "sandbox")
 
-    task_config = _mapping(tasks, task_id)
+    try:
+        task_bundle = load_task_bundle(repo_root, task_id, config=config)
+    except TaskBundleError as exc:
+        raise EvalConfigError(str(exc)) from exc
+    task_execution = task_bundle.execution
     agent_name = agent or _string(
-        task_config,
+        task_execution,
         "agent",
         _string(defaults, "agent", "codex"),
     )
-    profile_name = model_profile or _string(defaults, "model_profile", "default")
+    profile_name = model_profile or _string(
+        task_execution,
+        "model_profile",
+        _string(defaults, "model_profile", "default"),
+    )
     mcp_name = mcp_profile or _string(
-        task_config,
+        task_execution,
         "mcp_profile",
-        _string(defaults, "mcp_profile", "default"),
+        _string(defaults, "mcp_profile", "none"),
     )
     snapshot_mode = _string(defaults, "snapshot_mode", "working_tree")
-    verify_config = task_config.get("verify") or {}
-    if not isinstance(verify_config, dict):
-        raise EvalConfigError("task verify block must be a mapping")
     try:
-        test_plan = TestPlan.from_mapping(task_config.get("test_plan"))
+        test_plan = TestPlan.from_mapping(task_bundle.test_plan)
     except ValueError as exc:
         raise EvalConfigError(str(exc)) from exc
 
+    evaluator_agent_name = _string(defaults, "evaluator_agent", "codex")
     agent_config = _mapping(agents, agent_name)
-    profile = _mapping(profiles, profile_name)
+    evaluator_agent_config = _mapping(agents, evaluator_agent_name)
+    model_config = _mapping(model_profiles, profile_name)
     mcp_config = _mapping(mcp_profiles, mcp_name)
-    mcp_servers = _resolve_mcp_servers(mcp_config)
-    if not profile:
-        raise EvalConfigError(f"unknown model profile: {profile_name}")
     if not agent_config:
-        raise EvalConfigError(f"unknown agent: {agent_name}")
+        raise EvalConfigError(f"unknown agent profile: {agent_name}")
+    if not evaluator_agent_config:
+        raise EvalConfigError(f"unknown evaluator agent profile: {evaluator_agent_name}")
+    if not model_config:
+        raise EvalConfigError(f"unknown model profile: {profile_name}")
     if not mcp_config:
         raise EvalConfigError(f"unknown MCP profile: {mcp_name}")
+    if "adapter" not in agent_config:
+        agent_config = {**agent_config, "adapter": agent_name}
+    if "adapter" not in evaluator_agent_config:
+        evaluator_agent_config = {
+            **evaluator_agent_config,
+            "adapter": evaluator_agent_name,
+        }
+    try:
+        agent_profile = AgentProfile.from_mapping(agent_name, agent_config)
+    except ValueError as exc:
+        raise EvalConfigError(str(exc)) from exc
+    try:
+        evaluator_agent_profile = AgentProfile.from_mapping(
+            evaluator_agent_name, evaluator_agent_config
+        )
+    except ValueError as exc:
+        raise EvalConfigError(str(exc)) from exc
+    mcp_servers = _resolve_mcp_servers(mcp_config)
 
-    game_engine_root = _resolve_path(repo_root, paths, "game_engine")
-    dsh_root = _resolve_path(repo_root, paths, "dsh")
+    source_roots = _source_roots(paths)
+    try:
+        resource_specs = task_bundle.resource_specs(
+            repo_root=repo_root,
+            source_roots=source_roots,
+        )
+    except ValueError as exc:
+        raise EvalConfigError(str(exc)) from exc
+    game_engine_root = _resource_source(resource_specs, "game-engine")
+    dsh_root = _resource_source(resource_specs, "dsh")
+    if game_engine_ref is not None:
+        resource_specs = _override_resource_ref(resource_specs, "game-engine", game_engine_ref)
+    if dsh_ref is not None:
+        resource_specs = _override_resource_ref(resource_specs, "dsh", dsh_ref)
+
     runs_root = _resolve_path(repo_root, paths, "runs_root")
     run_id = f"{task_id}-{uuid4().hex[:10]}"
-
+    protocol = _string(model_config, "protocol", agent_profile.protocol)
+    model = _string(model_config, "model", "")
     return RunSpec(
         run_id=run_id,
         task_id=task_id,
-        task_prompt=_string(
-            task_config,
-            "prompt",
-            f"Execute evaluation task '{task_id}' in /workspace/game-engine. "
-            "Read the project instructions before making changes and report only "
-            "after verification.",
-        ),
+        task_prompt=task_bundle.prompt,
         agent=agent_name,
-        agent_image=_string(agent_config, "image", f"ai-native-{agent_name}-agent:local"),
+        agent_image=agent_profile.image,
         model_profile=profile_name,
-        model=_string(profile, "model", ""),
-        protocol=_string(profile, "protocol", "responses"),
-        reasoning_effort=_optional_string(profile, "reasoning_effort"),
+        model=model,
+        model_provider=_optional_string(
+            model_config,
+            "provider",
+            "eval" if agent_profile.adapter == "dsh-acp" else None,
+        ),
+        protocol=protocol,
+        reasoning_effort=_optional_string(
+            model_config,
+            "reasoning_effort",
+            _optional_string(agent_config, "reasoning_effort"),
+        ),
         mcp_profile=mcp_name,
         mcp_host=_string(mcp_config, "host", "host.docker.internal"),
         mcp_port=_integer(mcp_config, "port", 9876),
         mcp_blender="blender" in mcp_servers,
         mcp_ue5="unreal-mcp" in mcp_servers,
         mcp_servers=mcp_servers,
-        verify=verify_config,
+        verify=task_bundle.verify,
         test_plan=test_plan,
         sandbox=sandbox_config,
         snapshot_mode=snapshot_mode,
@@ -118,6 +174,66 @@ def resolve_run(
         dsh_root=dsh_root,
         runs_root=runs_root,
         run_dir=runs_root / run_id,
+        agent_profile=agent_profile,
+        evaluator_agent=evaluator_agent_name,
+        evaluator_agent_profile=evaluator_agent_profile,
+        resource_specs=resource_specs,
+        task_bundle=task_bundle.to_dict(),
+    )
+
+
+def _merge_named_profile_source(
+    repo_root: Path,
+    config: Mapping[str, Any],
+    inline_key: str,
+    root_value: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Load external profile files and overlay inline legacy definitions."""
+    merged: dict[str, Any] = {}
+    profile_roots = _mapping(config, "profile_roots")
+    default_root = "profiles/agents" if inline_key == "agents" else "profiles/models"
+    raw_root = profile_roots.get(inline_key, default_root)
+    root = Path(str(raw_root))
+    if not root.is_absolute():
+        root = repo_root / root
+    if root.is_dir():
+        for path in sorted((*root.glob("*.yaml"), *root.glob("*.yml"))):
+            payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            if not isinstance(payload, Mapping):
+                raise EvalConfigError(f"profile file must contain a mapping: {path}")
+            profile_id = payload.get("id", path.stem)
+            merged[str(profile_id)] = dict(payload)
+    for key, value in root_value.items():
+        if isinstance(value, Mapping):
+            current = merged.get(str(key), {})
+            merged[str(key)] = {**current, **dict(value)}
+    return merged
+
+
+def _source_roots(paths: Mapping[str, Any]) -> dict[str, Any]:
+    raw = paths.get("source_roots")
+    if isinstance(raw, Mapping):
+        return dict(raw)
+    return {
+        key: value
+        for key, value in paths.items()
+        if key not in {"runs_root", "source_roots"} and isinstance(value, str)
+    }
+
+
+def _resource_source(specs: tuple[Any, ...], resource_id: str) -> Path | None:
+    for spec in specs:
+        if spec.resource_id == resource_id:
+            return spec.source
+    return None
+
+
+def _override_resource_ref(
+    specs: tuple[Any, ...], resource_id: str, ref: str
+) -> tuple[Any, ...]:
+    return tuple(
+        replace(spec, ref=ref) if spec.resource_id == resource_id else spec
+        for spec in specs
     )
 
 
@@ -146,7 +262,7 @@ def _resolve_mcp_servers(mcp_config: dict[str, Any]) -> dict[str, Any]:
 
 
 def _substitute_mcp_values(value: Any, variables: dict[str, str]) -> Any:
-    """Substitute `${NAME}` placeholders in MCP profile strings."""
+    """Substitute ${NAME} placeholders in MCP profile strings."""
     if isinstance(value, str):
         for name, replacement in variables.items():
             value = value.replace(f"${{{name}}}", replacement)
@@ -154,28 +270,28 @@ def _substitute_mcp_values(value: Any, variables: dict[str, str]) -> Any:
     if isinstance(value, list):
         return [_substitute_mcp_values(item, variables) for item in value]
     if isinstance(value, dict):
-        return {
-            key: _substitute_mcp_values(item, variables) for key, item in value.items()
-        }
+        return {key: _substitute_mcp_values(item, variables) for key, item in value.items()}
     return value
 
 
-def _mapping(value: dict[str, Any], key: str) -> dict[str, Any]:
+def _mapping(value: Mapping[str, Any], key: str) -> dict[str, Any]:
     child = value.get(key, {})
-    return child if isinstance(child, dict) else {}
+    return dict(child) if isinstance(child, Mapping) else {}
 
 
-def _string(value: dict[str, Any], key: str, default: str) -> str:
+def _string(value: Mapping[str, Any], key: str, default: str) -> str:
     child = value.get(key, default)
     return str(child) if child is not None else default
 
 
-def _optional_string(value: dict[str, Any], key: str) -> str | None:
-    child = value.get(key)
+def _optional_string(
+    value: Mapping[str, Any], key: str, default: str | None = None
+) -> str | None:
+    child = value.get(key, default)
     return None if child is None else str(child)
 
 
-def _integer(value: dict[str, Any], key: str, default: int) -> int:
+def _integer(value: Mapping[str, Any], key: str, default: int) -> int:
     child = value.get(key, default)
     try:
         return int(child)
@@ -183,8 +299,10 @@ def _integer(value: dict[str, Any], key: str, default: int) -> int:
         raise EvalConfigError(f"{key} must be an integer") from exc
 
 
-def _resolve_path(repo_root: Path, paths: dict[str, Any], key: str) -> Path:
+def _resolve_path(repo_root: Path, paths: Mapping[str, Any], key: str) -> Path:
     raw = paths.get(key)
+    if raw is None:
+        raw = _mapping(paths, "source_roots").get(key)
     if not isinstance(raw, str) or not raw:
         raise EvalConfigError(f"paths.{key} must be a non-empty string")
     path = Path(raw)

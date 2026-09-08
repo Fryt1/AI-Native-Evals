@@ -1,0 +1,11 @@
+id: blender-cube
+version: 1
+prompt_file: prompt.md
+resources:
+- id: game-engine
+  kind: repository
+  source: game_engine
+  mount: game-engine
+execution:
+  agent: codex-dcc
+  mcp_profile: blender-host

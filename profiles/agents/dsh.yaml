@@ -1,0 +1,29 @@
+id: dsh
+adapter: dsh-acp
+image: ai-native-dsh-agent:local
+protocol: acp
+workdir: /workspace
+entrypoint: node
+command:
+  - /run-config/dsh-acp-runner.mjs
+  - ${TASK_PROMPT}
+environment:
+  DSH_HOME: /tmp/dsh-home
+  DSH_EXECUTABLE: node
+  DSH_SERVER_ARGS: '["--import","tsx/esm","/opt/dsh/apps/cli/src/bin.ts","--profile","acp"]'
+  DSH_CWD: /opt/dsh
+  DSH_PERMISSION_MODE: danger-full-access
+  DSH_MODEL: ${MODEL}
+  DSH_REASONING_EFFORT: ${REASONING_EFFORT}
+writable_paths:
+  - /tmp/dsh-home
+capabilities:
+  - filesystem
+  - shell
+  - mcp
+  - acp
+options:
+  executable: dsh
+  profile: acp
+  permission_option_id: allow-once
+  close_after_prompt: true

@@ -1,0 +1,26 @@
+ARG NODE_BASE_IMAGE=node:22-bookworm
+FROM ${NODE_BASE_IMAGE}
+
+ARG DSH_VERSION=0.1.2-rc.1
+ARG NPM_REGISTRY=https://registry.npmmirror.com
+
+RUN npm install --global --no-fund --no-audit --registry="${NPM_REGISTRY}" @deepseek-ai/dsh@${DSH_VERSION} \
+    && mkdir -p /tmp/dsh-home /workspace \
+    && chown -R node:node /tmp/dsh-home /workspace
+
+ENV DSH_HOME=/tmp/dsh-home
+ENV DSH_MODEL=deepseek/deepseek-v4-flash
+ENV DSH_REASONING_EFFORT=high
+ENV EVAL_GATEWAY_URL=http://llm-gateway:8080/v1
+ENV EVAL_MODEL=deepseek/deepseek-v4-flash
+ENV EVAL_WIRE_API=responses
+ENV EVAL_REASONING_EFFORT=high
+ENV EVAL_MCP_SERVERS_FILE=/run-config/mcp-servers.json
+ENV EVAL_DSH_MCP_SERVERS_FILE=/run-config/dsh-mcp-servers.json
+ENV EVAL_WORKDIR=/workspace
+ENV DSH_EXECUTABLE=dsh
+ENV DSH_SERVER_ARGS=["--profile","acp"]
+ENV DSH_VERSION=${DSH_VERSION}
+
+USER node
+ENTRYPOINT ["dsh", "--profile", "acp"]

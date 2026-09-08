@@ -23,6 +23,7 @@ Comfy MCP:         0.10.0
 Comfy CLI:         1.18.0
 Gateway:           ai-native-llm-gateway:local
 Agent images:      ai-native-codex-agent:local, ai-native-codex-agent:all-mcp
+DSH image:         optional ai-native-dsh-agent:local (source) / ai-native-dsh-agent:release (published CLI)
 ```
 
 The exact Docker image IDs, repository digests, file sizes, and SHA256 values
@@ -84,7 +85,16 @@ pwsh -NoProfile -File .\tools\build-sandbox-images.ps1 `
 The offline build loads the Docker archive first and then uses
 `docker build --network none --pull=false`. It does not use Docker Hub, PyPI,
 npm, or apt. The current offline build was validated successfully and the
-resulting image includes `git`, Codex 0.153.4, Blender MCP, and Comfy MCP.
+resulting Codex image includes `git`, Codex 0.153.4, Blender MCP, and Comfy MCP.
+The DSH image is deliberately not part of this archive: it is built from the
+separate `dsh` repository and needs its own pnpm dependency cache. Build it
+when the network is available:
+
+```powershell
+pwsh -NoProfile -File .\tools\build-sandbox-images.ps1 -IncludeDshRelease -UseMirror
+# Exact local dsh source commit (slower monorepo build):
+pwsh -NoProfile -File .\tools\build-sandbox-images.ps1 -IncludeDsh -UseMirror
+```
 
 ## What is deliberately not cached in Git
 

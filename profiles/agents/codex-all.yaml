@@ -1,0 +1,22 @@
+id: codex-all
+adapter: codex
+image: ai-native-codex-agent:all-mcp
+protocol: responses
+workdir: /workspace/game-engine
+writable_paths:
+  - /opt/codex-home
+capabilities:
+  - filesystem
+  - shell
+  - mcp
+  - blender
+  - ue5
+  - comfyui
+  - research
+options:
+  executable: codex
+  sandbox: workspace-write
+  ask_for_approval: never
+  ephemeral: true
+  skip_git_repo_check: true
+

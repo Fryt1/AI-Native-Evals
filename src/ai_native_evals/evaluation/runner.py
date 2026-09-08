@@ -6,6 +6,7 @@ import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from importlib.metadata import entry_points
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -54,8 +55,29 @@ class EvaluationContext:
         """Host path containing the subject Agent trace."""
         return Path(str(self.paths.get("trace", self.run_dir / "trace")))
 
+    @property
+    def evaluator_agent_profile(self) -> dict[str, Any]:
+        """Return the run-scoped profile reused by locator and judge Agents."""
+        run = self.manifest.get("run", {})
+        if not isinstance(run, dict):
+            return {}
+        value = run.get("evaluator_agent_profile") or run.get("agent_profile")
+        return dict(value) if isinstance(value, Mapping) else {}
+
+    @property
+    def task_bundle_dir(self) -> Path | None:
+        """Return the Task bundle directory for local prompt/rubric references."""
+        run = self.manifest.get("run", {})
+        bundle = run.get("task_bundle", {}) if isinstance(run, dict) else {}
+        source = bundle.get("source_path") if isinstance(bundle, dict) else None
+        if not source:
+            return None
+        path = Path(str(source))
+        return path.parent if path.is_file() else path
+
 
 _REGISTRY: dict[str, Evaluator] = {}
+_ENTRYPOINTS_LOADED = False
 
 
 def register_evaluator(name: str) -> Callable[[Evaluator], Evaluator]:
@@ -71,8 +93,23 @@ def register_evaluator(name: str) -> Callable[[Evaluator], Evaluator]:
 
 
 def available_evaluators() -> tuple[str, ...]:
-    """Return registered evaluator ids."""
+    """Return built-in and externally installed evaluator ids."""
+    _load_entrypoint_evaluators()
     return tuple(sorted(_REGISTRY))
+
+
+def _load_entrypoint_evaluators() -> None:
+    global _ENTRYPOINTS_LOADED
+    if _ENTRYPOINTS_LOADED:
+        return
+    _ENTRYPOINTS_LOADED = True
+    for plugin in entry_points(group="ai_native_evals.evaluators"):
+        if plugin.name in _REGISTRY:
+            continue
+        loaded = plugin.load()
+        if not callable(loaded):
+            raise EvaluationError(f"evaluator plugin {plugin.name!r} is not callable")
+        _REGISTRY[plugin.name] = loaded
 
 
 def evaluate_run(
@@ -538,6 +575,7 @@ def _artifact_locator(context: EvaluationContext, check: CheckSpec) -> CheckResu
         prompt=prompt,
         mounts=default_readonly_mounts(context.manifest),
         output_filename=output_filename,
+        agent_profile=context.evaluator_agent_profile,
         image=str(check.config.get("image")) if check.config.get("image") else None,
         model=str(check.config.get("model")) if check.config.get("model") else None,
         protocol=str(check.config.get("protocol")) if check.config.get("protocol") else None,
@@ -596,6 +634,10 @@ def _quality_judge(context: EvaluationContext, check: CheckSpec) -> CheckResult:
     started = _utc_now()
     prompt_text = _load_text_config(context, check.config.get("prompt"))
     rubric = _load_structured_config(context, check.config.get("rubric"))
+    if rubric is None:
+        run = context.manifest.get("run", {})
+        bundle = run.get("task_bundle", {}) if isinstance(run, dict) else {}
+        rubric = bundle.get("rubric") if isinstance(bundle, dict) else None
     if not prompt_text:
         return _error_result(check, started, "quality_judge requires config.prompt")
     if rubric is None:
@@ -609,6 +651,7 @@ def _quality_judge(context: EvaluationContext, check: CheckSpec) -> CheckResult:
         prompt=prompt,
         mounts=default_readonly_mounts(context.manifest),
         output_filename=output_filename,
+        agent_profile=context.evaluator_agent_profile,
         image=str(check.config.get("image")) if check.config.get("image") else None,
         model=str(check.config.get("model")) if check.config.get("model") else None,
         protocol=str(check.config.get("protocol")) if check.config.get("protocol") else None,
@@ -656,7 +699,10 @@ def _process_analyzer(context: EvaluationContext, check: CheckSpec) -> CheckResu
     """Measure observable process signals without pretending to judge quality."""
     started = _utc_now()
     trace_path = context.trace_dir / "agent-container.log"
-    if not trace_path.is_file():
+    normalized_path = context.trace_dir / "normalized-events.jsonl"
+    if not trace_path.is_file() and not normalized_path.is_file():
+        normalized_path = context.run_dir / "normalized-events.jsonl"
+    if not trace_path.is_file() and not normalized_path.is_file():
         return CheckResult(
             check_id=check.id,
             phase=check.phase,
@@ -668,15 +714,21 @@ def _process_analyzer(context: EvaluationContext, check: CheckSpec) -> CheckResu
             started_at=started,
             finished_at=_utc_now(),
         )
-    digest = digest_run(context.run_dir)
+    digest = digest_run(context.run_dir) if trace_path.is_file() else {}
     stats = _json_safe(digest.get("stats", {}))
+    if normalized_path.is_file():
+        from ..adapters.events import read_normalized_events
+
+        normalized = read_normalized_events(normalized_path)
+        stats = _merge_normalized_stats(stats, normalized)
     struggle = _json_safe(digest.get("struggle", {}))
     mcp_total = stats.get("mcp_calls_total") or 0
     shell_total = stats.get("shell_commands_total") or 0
-    total = mcp_total + shell_total
+    tool_total = stats.get("tool_calls_total") or 0
+    total = mcp_total + shell_total + tool_total
     failed = (stats.get("mcp_calls_failed") or 0) + (
         stats.get("shell_commands_failed") or 0
-    )
+    ) + (stats.get("tool_calls_failed") or 0)
     score = None if not total else round(max(0.0, 1.0 - failed / total), 3)
     return CheckResult(
         check_id=check.id,
@@ -693,7 +745,7 @@ def _process_analyzer(context: EvaluationContext, check: CheckSpec) -> CheckResu
                 "task policy does not use it as a hard gate"
             ),
         },
-        evidence_refs=(str(context.trace_dir / "agent-container.log"),),
+        evidence_refs=(str(normalized_path if normalized_path.is_file() else trace_path),),
         started_at=started,
         finished_at=_utc_now(),
     )
@@ -891,12 +943,21 @@ def _validate_selected_artifact(selected: str, roots: list[str], workspace: Path
     return host_path
 
 
+def _config_candidates(context: EvaluationContext, value: str) -> tuple[Path, ...]:
+    candidate = Path(value)
+    if candidate.is_absolute():
+        return (candidate,)
+    candidates = [context.repo_root / candidate]
+    if context.task_bundle_dir is not None:
+        candidates.append(context.task_bundle_dir / candidate)
+    return tuple(candidates)
+
+
 def _load_text_config(context: EvaluationContext, value: Any) -> str | None:
     if isinstance(value, str):
-        candidate = Path(value)
-        path = candidate if candidate.is_absolute() else context.repo_root / candidate
-        if path.is_file():
-            return path.read_text(encoding="utf-8")
+        for path in _config_candidates(context, value):
+            if path.is_file():
+                return path.read_text(encoding="utf-8")
         return value
     return None
 
@@ -905,17 +966,117 @@ def _load_structured_config(context: EvaluationContext, value: Any) -> Any:
     if isinstance(value, Mapping):
         return dict(value)
     if isinstance(value, str):
-        candidate = Path(value)
-        path = candidate if candidate.is_absolute() else context.repo_root / candidate
-        if not path.is_file():
-            return None
-        try:
-            import yaml
+        for path in _config_candidates(context, value):
+            if not path.is_file():
+                continue
+            try:
+                import yaml
 
-            return yaml.safe_load(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return None
+                return yaml.safe_load(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                return None
     return None
+
+
+def _merge_normalized_stats(
+    current: Mapping[str, Any], events: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Project the shared trace vocabulary into provider-neutral counters."""
+    stats = dict(current)
+    calls = [
+        event for event in events if event.get("type") in {"tool_call", "command_started"}
+    ]
+    results = [
+        event for event in events if event.get("type") in {"tool_result", "command_completed"}
+    ]
+    mcp_calls = [event for event in calls if _is_normalized_mcp_event(event)]
+    shell_calls = [event for event in calls if _is_normalized_shell_event(event)]
+    generic_calls = [
+        event for event in calls if event not in mcp_calls and event not in shell_calls
+    ]
+    failed_ids = {
+        _normalized_event_id(event)
+        for event in results
+        if _normalized_event_failed(event)
+    }
+    failed = sum(1 for event in results if _normalized_event_failed(event))
+    generic_failed = sum(
+        1
+        for event in generic_calls
+        if _normalized_event_id(event) in failed_ids
+    )
+    shell_failed = sum(
+        1
+        for event in shell_calls
+        if _normalized_event_id(event) in failed_ids
+    )
+    mcp_failed = sum(
+        1
+        for event in mcp_calls
+        if _normalized_event_id(event) in failed_ids
+    )
+    stats.update(
+        {
+            "event_items": len(events),
+            "mcp_calls_total": max(int(stats.get("mcp_calls_total") or 0), len(mcp_calls)),
+            "shell_commands_total": max(
+                int(stats.get("shell_commands_total") or 0), len(shell_calls)
+            ),
+            "tool_calls_total": len(generic_calls),
+            "mcp_calls_failed": max(int(stats.get("mcp_calls_failed") or 0), mcp_failed),
+            "shell_commands_failed": max(
+                int(stats.get("shell_commands_failed") or 0), shell_failed
+            ),
+            "tool_calls_failed": generic_failed,
+            "actions_total": len(mcp_calls) + len(shell_calls) + len(generic_calls),
+            "actions_failed": failed if results else 0,
+            "agent_messages": sum(1 for event in events if event.get("type") == "agent_message"),
+            "reasoning_blocks": sum(1 for event in events if event.get("type") == "reasoning"),
+        }
+    )
+    return stats
+
+
+def _normalized_payload(event: Mapping[str, Any]) -> Mapping[str, Any]:
+    payload = event.get("payload")
+    return payload if isinstance(payload, Mapping) else {}
+
+
+def _normalized_value(event: Mapping[str, Any]) -> Mapping[str, Any]:
+    payload = _normalized_payload(event)
+    item = payload.get("item") if isinstance(payload.get("item"), Mapping) else {}
+    update = payload.get("update") if isinstance(payload.get("update"), Mapping) else {}
+    return {**item, **update}
+
+
+def _normalized_event_id(event: Mapping[str, Any]) -> str:
+    value = _normalized_value(event)
+    return str(value.get("id") or value.get("toolCallId") or event.get("seq", ""))
+
+
+def _is_normalized_mcp_event(event: Mapping[str, Any]) -> bool:
+    payload = _normalized_payload(event)
+    value = _normalized_value(event)
+    item = payload.get("item")
+    if isinstance(item, Mapping) and item.get("type") == "mcp_tool_call":
+        return True
+    return any(value.get(key) for key in ("server", "serverName", "mcp_server"))
+
+
+def _is_normalized_shell_event(event: Mapping[str, Any]) -> bool:
+    if event.get("type") in {"command_started", "command_completed"}:
+        return True
+    value = _normalized_value(event)
+    title = str(value.get("title", value.get("tool", ""))).lower()
+    return title in {"bash", "pwsh", "shell", "terminal"} or bool(value.get("command"))
+
+
+def _normalized_event_failed(event: Mapping[str, Any]) -> bool:
+    value = _normalized_value(event)
+    status = str(value.get("status", "")).lower()
+    return bool(value.get("error")) or status in {"failed", "error"} or (
+        value.get("exit_code") not in (None, 0)
+    )
 
 
 def _json_safe(value: Any) -> Any:

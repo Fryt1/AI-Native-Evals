@@ -1,0 +1,17 @@
+id: codex
+adapter: codex
+image: ai-native-codex-agent:local
+protocol: responses
+workdir: /workspace
+writable_paths:
+  - /opt/codex-home
+capabilities:
+  - filesystem
+  - shell
+  - mcp
+options:
+  executable: codex
+  sandbox: workspace-write
+  ask_for_approval: never
+  ephemeral: true
+  skip_git_repo_check: true

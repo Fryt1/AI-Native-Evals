@@ -23,7 +23,13 @@ _ALLOWED_STATUSES = frozenset(
 
 @dataclass(frozen=True, slots=True)
 class AgentLaunchSpec:
-    """Inputs shared by external Agent adapters."""
+    """Inputs shared by every external Agent adapter.
+
+    The contract deliberately contains no Codex or DSH-specific flags.  A
+    profile/adapter may project these values into its own command or protocol.
+    ``run_dir`` remains the durable host-side run directory; ``workspace_dir``
+    is the optional host directory exposed to the Agent as ``working_directory``.
+    """
 
     agent_id: str
     run_dir: Path
@@ -31,7 +37,14 @@ class AgentLaunchSpec:
     task_id: str = ""
     timeout_seconds: int = 1800
     model: str | None = None
+    reasoning_effort: str | None = None
+    protocol: str = "responses"
+    working_directory: str = "/workspace"
+    workspace_dir: Path | None = None
+    system_prompt: str | None = None
+    mcp_servers: Mapping[str, Any] = field(default_factory=dict)
     environment: Mapping[str, str] = field(default_factory=dict)
+    options: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +64,9 @@ class AgentRunResult:
     manifest_path: Path
     model: str | None = None
     failure_message: str | None = None
+    normalized_events_path: Path | None = None
+    adapter: str | None = None
+    protocol: str | None = None
 
     @property
     def completed(self) -> bool:
@@ -73,6 +89,11 @@ class AgentRunResult:
             "manifest_path": str(self.manifest_path),
             "model": self.model,
             "failure_message": self.failure_message,
+            "normalized_events_path": (
+                str(self.normalized_events_path) if self.normalized_events_path else None
+            ),
+            "adapter": self.adapter,
+            "protocol": self.protocol,
         }
 
 
