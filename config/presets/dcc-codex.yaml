@@ -1,0 +1,5 @@
+id: dcc-codex
+agent: codex-dcc
+model_profile: sub2api-deepseek
+mcp_profile: blender-ue5-host
+sandbox_profile: docker-default

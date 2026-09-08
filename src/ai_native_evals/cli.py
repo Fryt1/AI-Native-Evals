@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -43,6 +44,8 @@ def _add_run_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--game-engine-ref", help="Git ref for the Game Engine snapshot")
     parser.add_argument("--dsh-ref", help="Git ref for the AI-Native-DSH snapshot")
     parser.add_argument("--mcp-profile", help="MCP profile override")
+    parser.add_argument("--sandbox-profile", help="Sandbox profile override")
+    parser.add_argument("--preset", help="named run preset (agent/model/MCP/sandbox selectors)")
 
 
 def _prepare_from_args(args: argparse.Namespace) -> tuple[Path, Path]:
@@ -57,6 +60,8 @@ def _prepare_from_args(args: argparse.Namespace) -> tuple[Path, Path]:
         game_engine_ref=args.game_engine_ref,
         dsh_ref=args.dsh_ref,
         mcp_profile=args.mcp_profile,
+        sandbox_profile=args.sandbox_profile,
+        preset=args.preset,
     )
     run_dir = prepare_run(
         repo_root,
@@ -80,6 +85,8 @@ def _plan(args: argparse.Namespace) -> int:
         game_engine_ref=args.game_engine_ref,
         dsh_ref=args.dsh_ref,
         mcp_profile=args.mcp_profile,
+        sandbox_profile=args.sandbox_profile,
+        preset=args.preset,
     )
     payload = {
         "task_id": spec.task_id,
@@ -290,6 +297,55 @@ def _task_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def _task_new(args: argparse.Namespace) -> int:
+    """Create a minimal one-file Task Bundle without overwriting by default."""
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", args.task_id):
+        raise EvalConfigError(
+            "task id must start with a lowercase letter/digit and contain only "
+            "lowercase letters, digits, '-' or '_'"
+        )
+    task_dir = _repo_root() / "tasks" / args.task_id
+    task_file = task_dir / "task.yaml"
+    if task_file.exists() and not args.force:
+        raise EvalConfigError(f"task already exists: {task_file}; use --force to replace task.yaml")
+    task_dir.mkdir(parents=True, exist_ok=True)
+    template = f"""id: {args.task_id}
+version: 1
+
+# Keep this inline for a small task. Move it to prompt.md when it grows.
+prompt: |
+  Describe the work for task {args.task_id} here.
+  Write the required artifact under /workspace/output and read it back before finishing.
+
+# Add repository/fixture/host_service entries only when this Task needs them.
+resources: []
+
+# execution contains selectors only; use --agent/--model-profile for comparisons.
+execution:
+  mcp_profile: none
+
+test_plan:
+  version: 1
+  checks:
+    - id: result-file
+      phase: outcome
+      evaluator: script.file_exists.v1
+      input:
+        path: /workspace/output/result.json
+      required: true
+      on_error: fail
+"""
+    task_file.write_text(template, encoding="utf-8")
+    print(
+        json.dumps(
+            {"created": str(task_file), "task_id": args.task_id},
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    return 0
+
+
 def _task_show(args: argparse.Namespace) -> int:
     from .tasks.bundles import load_task_bundle
 
@@ -338,22 +394,27 @@ def _task_validate(args: argparse.Namespace) -> int:
 
 
 def _profile_catalog(repo_root: Path, kind: str) -> dict[str, dict[str, object]]:
-    config_path, config = _config_for_repo(repo_root)
-    del config_path
+    _config_path, config = _config_for_repo(repo_root)
     from .runs.resolver import _mapping, _merge_named_profile_source
 
-    if kind == "agents":
-        return _merge_named_profile_source(
-            repo_root,
-            config,
-            "agents",
-            {**_mapping(_mapping(config, "profiles"), "agents"), **_mapping(config, "agents")},
-        )
+    profiles_config = _mapping(config, "profiles")
+    mapping = {
+        "agents": ("agents", "agents", "profiles/agents"),
+        "models": ("model_profiles", "models", "profiles/models"),
+        "mcp": ("mcp_profiles", "mcp", "profiles/mcp"),
+        "sandboxes": ("sandbox_profiles", "sandboxes", "profiles/sandboxes"),
+        "presets": ("presets", "presets", "config/presets"),
+    }
+    if kind not in mapping:
+        raise EvalConfigError(f"unsupported profile catalog: {kind}")
+    inline_key, profile_key, default_root = mapping[kind]
     return _merge_named_profile_source(
         repo_root,
         config,
-        "model_profiles",
-        {**_mapping(_mapping(config, "profiles"), "models"), **_mapping(config, "model_profiles")},
+        inline_key,
+        {**_mapping(profiles_config, profile_key), **_mapping(config, inline_key)},
+        profile_root_key=profile_key,
+        default_root=default_root,
     )
 
 
@@ -366,6 +427,55 @@ def _agent_list(_args: argparse.Namespace) -> int:
 def _model_list(_args: argparse.Namespace) -> int:
     profiles = _profile_catalog(_repo_root(), "models")
     print(json.dumps({"models": profiles}, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _profile_list(args: argparse.Namespace) -> int:
+    kind = args.profile_kind
+    key = "sandboxes" if kind == "sandbox" else kind
+    profiles = _profile_catalog(_repo_root(), key)
+    print(json.dumps({key: profiles}, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _compare(args: argparse.Namespace) -> int:
+    """Run one Task through multiple Agents with shared evaluation inputs."""
+    from .runs.compare import compare_task, render_comparison_markdown
+
+    agents = tuple(value.strip() for value in args.agents.split(","))
+    config_path = args.config.resolve() if args.config else None
+    report = compare_task(
+        _repo_root(),
+        args.task_id,
+        agents,
+        config_path=config_path,
+        model_profile=args.model_profile,
+        mcp_profile=args.mcp_profile,
+        sandbox_profile=args.sandbox_profile,
+        preset=args.preset,
+        game_engine_ref=args.game_engine_ref,
+        dsh_ref=args.dsh_ref,
+        evaluate=not args.no_evaluate,
+    )
+    if args.json:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+    else:
+        print(render_comparison_markdown(report))
+    successful = all(
+        run.get("status") == "completed"
+        and (
+            args.no_evaluate
+            or (run.get("evaluation") or {}).get("decision") == "pass"
+        )
+        for run in report.get("runs", [])
+    )
+    return 0 if successful else 1
+
+
+def _config_show(args: argparse.Namespace) -> int:
+    repo_root = _repo_root()
+    path, config = _config_for_repo(repo_root, args.config)
+    print(json.dumps({"path": str(path), "config": config}, ensure_ascii=False, indent=2))
     return 0
 
 
@@ -397,6 +507,23 @@ def main() -> int:
     parser.add_argument("--version", action="store_true", help="print the package version")
     subparsers = parser.add_subparsers(dest="command")
 
+    compare_parser = subparsers.add_parser(
+        "compare", help="run one Task through multiple Agent profiles"
+    )
+    compare_parser.add_argument("task_id")
+    compare_parser.add_argument("--agents", required=True, help="comma-separated Agent ids")
+    compare_parser.add_argument("--config", type=Path)
+    compare_parser.add_argument("--preset")
+    compare_parser.add_argument("--model-profile")
+    compare_parser.add_argument("--mcp-profile")
+    compare_parser.add_argument("--sandbox-profile")
+    compare_parser.add_argument("--game-engine-ref")
+    compare_parser.add_argument("--dsh-ref")
+    compare_parser.add_argument("--no-evaluate", action="store_true")
+    compare_parser.add_argument(
+        "--json", action="store_true", help="print JSON instead of Markdown"
+    )
+
     task_parser = subparsers.add_parser("task", help="discover and validate Task bundles")
     task_subparsers = task_parser.add_subparsers(dest="task_command", required=True)
     task_list_parser = task_subparsers.add_parser("list", help="list Task ids")
@@ -409,6 +536,11 @@ def main() -> int:
     )
     task_validate_parser.add_argument("task_id")
     task_validate_parser.add_argument("--config", type=Path)
+    task_new_parser = task_subparsers.add_parser(
+        "new", help="create a minimal one-file Task Bundle"
+    )
+    task_new_parser.add_argument("task_id")
+    task_new_parser.add_argument("--force", action="store_true", help="replace only task.yaml")
 
     agent_parser = subparsers.add_parser("agent", help="list Agent profiles")
     agent_subparsers = agent_parser.add_subparsers(dest="agent_command", required=True)
@@ -417,6 +549,25 @@ def main() -> int:
     model_parser = subparsers.add_parser("model", help="list model profiles")
     model_subparsers = model_parser.add_subparsers(dest="model_command", required=True)
     model_subparsers.add_parser("list", help="list model profiles")
+
+    for command_name, profile_kind in (
+        ("mcp", "mcp"),
+        ("sandbox", "sandbox"),
+        ("preset", "presets"),
+    ):
+        profile_parser = subparsers.add_parser(
+            command_name, help=f"list {command_name} profiles"
+        )
+        profile_subparsers = profile_parser.add_subparsers(
+            dest=f"{command_name}_command", required=True
+        )
+        list_parser = profile_subparsers.add_parser("list", help=f"list {command_name} profiles")
+        list_parser.set_defaults(profile_kind=profile_kind)
+
+    config_parser = subparsers.add_parser("config", help="inspect global evaluator configuration")
+    config_subparsers = config_parser.add_subparsers(dest="config_command", required=True)
+    config_show_parser = config_subparsers.add_parser("show", help="show resolved global config")
+    config_show_parser.add_argument("--config", type=Path)
 
     subparsers.add_parser("doctor", help="check local evaluator wiring")
 
@@ -488,6 +639,8 @@ def main() -> int:
         if args.version:
             print(__version__)
             return 0
+        if args.command == "compare":
+            return _compare(args)
         if args.command == "task":
             if args.task_command == "list":
                 return _task_list(args)
@@ -495,10 +648,17 @@ def main() -> int:
                 return _task_show(args)
             if args.task_command == "validate":
                 return _task_validate(args)
+            if args.task_command == "new":
+                return _task_new(args)
         if args.command == "agent" and args.agent_command == "list":
             return _agent_list(args)
         if args.command == "model" and args.model_command == "list":
             return _model_list(args)
+        if args.command in {"mcp", "sandbox", "preset"}:
+            if getattr(args, f"{args.command}_command") == "list":
+                return _profile_list(args)
+        if args.command == "config" and args.config_command == "show":
+            return _config_show(args)
         if args.command == "doctor":
             return _doctor(args)
         if args.command != "run":

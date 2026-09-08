@@ -45,6 +45,9 @@ EvaluationReport + Inspect Transcript/Viewer
 config/                 全局路径、默认值、Sandbox 限制、MCP registry
 profiles/agents/        Codex/DSH 等 Agent Profile
 profiles/models/        模型/Provider/协议/推理强度 Profile
+profiles/mcp/           MCP/宿主服务 Profile
+profiles/sandboxes/     Docker/WSL Sandbox Profile
+config/presets/         常用运行组合（只绑定 Profile id）
 tasks/<id>/             Task Bundle：task.yaml + prompt.md + rubric.yaml
 prompts/                跨 Task 复用的 Locator/Judge Prompt
 src/ai_native_evals/
@@ -70,6 +73,10 @@ uv sync --dev
 uv run ai-native-evals task list
 uv run ai-native-evals agent list
 uv run ai-native-evals model list
+uv run ai-native-evals mcp list
+uv run ai-native-evals sandbox list
+uv run ai-native-evals preset list
+uv run ai-native-evals config show
 uv run ai-native-evals doctor
 
 # 验证一个 Task（不创建 Run）
@@ -82,13 +89,26 @@ uv run inspect eval src/ai_native_evals/tasks/smoke.py@smoke --model mockllm/mod
 
 ## 定义 Task
 
+可以先生成一个最小的一文件 Task：
+
+```powershell
+uv run ai-native-evals task new my-task
+```
+
+然后只编辑：
+
+```text
+D:\work\AI-Native\AI-Native-Evals\tasks\my-task\task.yaml
+```
+
 新增：
 
 ```text
 tasks/my-task/
-├── task.yaml
-├── prompt.md
-└── rubric.yaml       # 需要 Quality Judge 时才需要
+├── task.yaml             # 小 Task 可以把 Prompt/Rubric 直接写在这里
+├── prompt.md             # 可选：Prompt 较长时拆出
+├── dataset.jsonl         # 可选：多样本
+└── rubric.yaml           # 可选：需要 Quality Judge 时使用
 ```
 
 最小 `task.yaml`：
@@ -124,8 +144,7 @@ resources:
 同一个 Task 对比 Agent：
 
 ```powershell
-uv run ai-native-evals run execute my-task --agent codex
-uv run ai-native-evals run execute my-task --agent dsh
+uv run ai-native-evals compare my-task --agents codex,dsh-release --preset codex-default
 ```
 
 这两次运行复用相同的 Prompt、资源、MCP、超时、TestPlan 和 Rubric，只替换被测 Profile；Outcome Locator/Quality Judge 默认仍由 `codex` Profile 执行。模型通过 `--model-profile` 或 `profiles/models/*.yaml` 选择，不会修改本机其他 Codex 会话配置。
@@ -167,7 +186,7 @@ Docker Agent
 ## 查看一次运行
 
 ```powershell
-uv run ai-native-evals run execute structured-report-contract --agent codex
+uv run ai-native-evals run execute structured-report-contract --preset codex-default
 uv run ai-native-evals run status <run-id>
 uv run ai-native-evals run digest <run-id>
 ```

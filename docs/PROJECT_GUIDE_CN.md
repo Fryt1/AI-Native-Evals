@@ -84,6 +84,9 @@ defaults:
 profile_roots:
   agents: profiles/agents
   models: profiles/models
+  mcp: profiles/mcp
+  sandboxes: profiles/sandboxes
+  presets: config/presets
 ```
 
 Task 自己放在 `tasks/<id>/`。加载优先级是：
@@ -96,7 +99,25 @@ config/eval.yaml 中的旧 tasks.<id>
 
 旧格式仍兼容，便于迁移；新 Task 不应再写进中央 `tasks:`。
 
+常用运行组合放在 `config/presets/`，只写 Profile id，不复制详细配置：
+
+```yaml
+id: dsh-release
+agent: dsh-release
+model_profile: sub2api-deepseek
+mcp_profile: none
+sandbox_profile: docker-default
+```
+
 ## 四、如何定义一个最小 Task
+
+先用 CLI 生成模板：
+
+```powershell
+uv run ai-native-evals task new my-task
+```
+
+这会创建 `tasks/my-task/task.yaml`。小 Task 可以只维护这一份文件；Prompt 较长、多样本或 Rubric 较复杂时，再拆成 `prompt.md`、`dataset.jsonl` 和 `rubric.yaml`。
 
 创建目录：
 
@@ -263,7 +284,7 @@ uv run ai-native-evals run plan my-task
 完整执行：
 
 ```powershell
-uv run ai-native-evals run execute my-task --agent codex
+uv run ai-native-evals run execute my-task --preset codex-default
 ```
 
 分步执行：

@@ -49,7 +49,10 @@ uv run ai-native-evals run cleanup <run-id>
 一键执行等价于：
 
 ```powershell
-uv run ai-native-evals run execute <task-id> --agent <codex-or-dsh>
+uv run ai-native-evals run execute <task-id> --preset <preset-id>
+
+# 同一 Task 批量比较多个 Agent
+uv run ai-native-evals compare <task-id> --agents codex,dsh-release --preset codex-default
 ```
 
 ## Prepare：只复制 Task 声明的资源
@@ -59,6 +62,9 @@ resolve_run
   ├── config/eval.yaml
   ├── profiles/agents/<agent>.yaml
   ├── profiles/models/<model>.yaml
+  ├── profiles/mcp/<mcp>.yaml
+  ├── profiles/sandboxes/<sandbox>.yaml
+  ├── config/presets/<preset>.yaml（可选）
   └── tasks/<task-id>/
           ├── prompt.md
           ├── task.yaml

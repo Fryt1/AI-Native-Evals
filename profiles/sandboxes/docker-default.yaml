@@ -1,0 +1,7 @@
+id: docker-default
+backend: wsl-docker
+distro: Ubuntu-20.04
+gateway_image: ai-native-llm-gateway:local
+read_only_root: true
+memory: 8g
+pids_limit: 512

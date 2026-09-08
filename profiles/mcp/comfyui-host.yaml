@@ -1,0 +1,13 @@
+id: comfyui-host
+host: host.docker.internal
+port: 8188
+servers:
+  comfyui:
+    transport: stdio
+    command: /opt/comfy-mcp/bin/comfy-mcp
+    cwd: /workspace/game-engine
+    env:
+      COMFY_BIN: /opt/comfy-mcp/bin/comfy
+      COMFYUI_URL: http://${MCP_HOST}:${MCP_PORT}
+      COMFY_LOCAL_URL: http://${MCP_HOST}:${MCP_PORT}
+      COMFY_WHERE: local

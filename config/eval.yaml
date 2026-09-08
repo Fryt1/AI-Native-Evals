@@ -1,128 +1,23 @@
-# AI-Native-Evals global registry. Task-owned definitions live under tasks/.
+# AI-Native-Evals global registry. Task-owned definitions live under tasks.
 version: 1
-
 task_roots:
-  - tasks
-
+- tasks
 profile_roots:
   agents: profiles/agents
   models: profiles/models
-
-# These are source aliases only. A source is copied only when a Task declares it
-# in resources[].
+  mcp: profiles/mcp
+  sandboxes: profiles/sandboxes
+  presets: config/presets
 paths:
   source_roots:
     game_engine: ../game-engine
     dsh: ../AI-Native-DSH
     dsh_runtime: ../dsh
   runs_root: ../EvalRuns
-
-sandbox:
-  backend: wsl-docker
-  distro: Ubuntu-20.04
-  gateway_image: ai-native-llm-gateway:local
-  read_only_root: true
-  memory: 8g
-  pids_limit: 512
-
 defaults:
   agent: codex
   evaluator_agent: codex
   model_profile: sub2api-deepseek
   mcp_profile: none
   snapshot_mode: working_tree
-
-# MCP is capability data, not Agent-specific code. Codex and DSH receive the
-# same logical servers; DSH gets a standard ACP McpServer[] projection.
-mcp_profiles:
-  none:
-    servers: {}
-
-  blender-host:
-    host: host.docker.internal
-    port: 9876
-    servers:
-      blender:
-        transport: stdio
-        command: /opt/blender-mcp/bin/blender-mcp
-        env:
-          BLENDER_MCP_HOST: ${MCP_HOST}
-          BLENDER_MCP_PORT: ${MCP_PORT}
-
-  ue5-host:
-    host: host.docker.internal
-    port: 8000
-    servers:
-      unreal-mcp:
-        transport: streamable-http
-        url: http://${MCP_HOST}:${MCP_PORT}/mcp
-        startup_timeout_sec: 30
-        tool_timeout_sec: 900
-
-  blender-ue5-host:
-    host: host.docker.internal
-    port: 9876
-    servers:
-      blender:
-        transport: stdio
-        command: /opt/blender-mcp/bin/blender-mcp
-        env:
-          BLENDER_MCP_HOST: ${MCP_HOST}
-          BLENDER_MCP_PORT: ${MCP_PORT}
-      unreal-mcp:
-        transport: streamable-http
-        url: http://${MCP_HOST}:8000/mcp
-        startup_timeout_sec: 30
-        tool_timeout_sec: 900
-
-  comfyui-host:
-    host: host.docker.internal
-    port: 8188
-    servers:
-      comfyui:
-        transport: stdio
-        command: /opt/comfy-mcp/bin/comfy-mcp
-        cwd: /workspace/game-engine
-        env:
-          COMFY_BIN: /opt/comfy-mcp/bin/comfy
-          COMFYUI_URL: http://${MCP_HOST}:${MCP_PORT}
-          COMFY_LOCAL_URL: http://${MCP_HOST}:${MCP_PORT}
-          COMFY_WHERE: local
-
-  research-host:
-    servers:
-      huggingface:
-        transport: streamable-http
-        url: https://huggingface.co/mcp?login
-        startup_timeout_sec: 30
-        tool_timeout_sec: 300
-
-  all-host:
-    host: host.docker.internal
-    port: 9876
-    servers:
-      blender:
-        transport: stdio
-        command: /opt/blender-mcp/bin/blender-mcp
-        env:
-          BLENDER_MCP_HOST: ${MCP_HOST}
-          BLENDER_MCP_PORT: ${MCP_PORT}
-      unreal-mcp:
-        transport: streamable-http
-        url: http://${MCP_HOST}:8000/mcp
-        startup_timeout_sec: 30
-        tool_timeout_sec: 900
-      comfyui:
-        transport: stdio
-        command: /opt/comfy-mcp/bin/comfy-mcp
-        cwd: /workspace/game-engine
-        env:
-          COMFY_BIN: /opt/comfy-mcp/bin/comfy
-          COMFYUI_URL: http://${MCP_HOST}:8188
-          COMFY_LOCAL_URL: http://${MCP_HOST}:8188
-          COMFY_WHERE: local
-      huggingface:
-        transport: streamable-http
-        url: https://huggingface.co/mcp?login
-        startup_timeout_sec: 30
-        tool_timeout_sec: 300
+  sandbox_profile: docker-default

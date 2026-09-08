@@ -1,0 +1,5 @@
+id: codex-default
+agent: codex
+model_profile: sub2api-deepseek
+mcp_profile: none
+sandbox_profile: docker-default

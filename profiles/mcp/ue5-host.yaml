@@ -1,0 +1,9 @@
+id: ue5-host
+host: host.docker.internal
+port: 8000
+servers:
+  unreal-mcp:
+    transport: streamable-http
+    url: http://${MCP_HOST}:${MCP_PORT}/mcp
+    startup_timeout_sec: 30
+    tool_timeout_sec: 900

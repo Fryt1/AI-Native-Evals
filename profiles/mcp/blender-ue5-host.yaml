@@ -1,0 +1,15 @@
+id: blender-ue5-host
+host: host.docker.internal
+port: 9876
+servers:
+  blender:
+    transport: stdio
+    command: /opt/blender-mcp/bin/blender-mcp
+    env:
+      BLENDER_MCP_HOST: ${MCP_HOST}
+      BLENDER_MCP_PORT: ${MCP_PORT}
+  unreal-mcp:
+    transport: streamable-http
+    url: http://${MCP_HOST}:8000/mcp
+    startup_timeout_sec: 30
+    tool_timeout_sec: 900

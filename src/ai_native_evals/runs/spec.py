@@ -40,6 +40,7 @@ class RunSpec:
     verify: dict[str, Any]
     test_plan: TestPlan
     sandbox: dict[str, Any]
+    sandbox_profile: str
     snapshot_mode: str
     game_engine_root: Path | None
     dsh_root: Path | None
@@ -54,6 +55,7 @@ class RunSpec:
     )
     resource_specs: tuple[ResourceSpec, ...] = ()
     task_bundle: dict[str, Any] = field(default_factory=dict)
+    preset: str | None = None
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
     def to_dict(self) -> dict[str, Any]:
@@ -81,6 +83,7 @@ class RunSpec:
             "verify": self.verify,
             "test_plan": self.test_plan.to_dict(),
             "sandbox": self.sandbox,
+            "sandbox_profile": self.sandbox_profile,
             "snapshot_mode": self.snapshot_mode,
             "game_engine_root": str(self.game_engine_root) if self.game_engine_root else None,
             "dsh_root": str(self.dsh_root) if self.dsh_root else None,
@@ -88,6 +91,7 @@ class RunSpec:
             "run_dir": str(self.run_dir),
             "resource_specs": [spec.to_dict() for spec in self.resource_specs],
             "task_bundle": self.task_bundle,
+            "preset": self.preset,
             "created_at": self.created_at,
         }
         return payload

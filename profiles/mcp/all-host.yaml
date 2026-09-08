@@ -1,0 +1,29 @@
+id: all-host
+host: host.docker.internal
+port: 9876
+servers:
+  blender:
+    transport: stdio
+    command: /opt/blender-mcp/bin/blender-mcp
+    env:
+      BLENDER_MCP_HOST: ${MCP_HOST}
+      BLENDER_MCP_PORT: ${MCP_PORT}
+  unreal-mcp:
+    transport: streamable-http
+    url: http://${MCP_HOST}:8000/mcp
+    startup_timeout_sec: 30
+    tool_timeout_sec: 900
+  comfyui:
+    transport: stdio
+    command: /opt/comfy-mcp/bin/comfy-mcp
+    cwd: /workspace/game-engine
+    env:
+      COMFY_BIN: /opt/comfy-mcp/bin/comfy
+      COMFYUI_URL: http://${MCP_HOST}:8188
+      COMFY_LOCAL_URL: http://${MCP_HOST}:8188
+      COMFY_WHERE: local
+  huggingface:
+    transport: streamable-http
+    url: https://huggingface.co/mcp?login
+    startup_timeout_sec: 30
+    tool_timeout_sec: 300

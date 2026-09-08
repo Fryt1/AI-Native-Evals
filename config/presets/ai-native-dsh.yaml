@@ -1,0 +1,5 @@
+id: ai-native-dsh
+agent: ai-native-dsh
+model_profile: sub2api-deepseek
+mcp_profile: none
+sandbox_profile: docker-default

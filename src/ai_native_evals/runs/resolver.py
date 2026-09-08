@@ -42,6 +42,8 @@ def resolve_run(
     game_engine_ref: str | None = None,
     dsh_ref: str | None = None,
     mcp_profile: str | None = None,
+    sandbox_profile: str | None = None,
+    preset: str | None = None,
 ) -> RunSpec:
     """Resolve defaults and command-line overrides into one RunSpec."""
     config_path = config_path or repo_root / "config" / "eval.yaml"
@@ -61,30 +63,84 @@ def resolve_run(
         "model_profiles",
         {**_mapping(profiles_config, "models"), **_mapping(config, "model_profiles")},
     )
-    mcp_profiles = _mapping(config, "mcp_profiles")
-    sandbox_config = _mapping(config, "sandbox")
+    mcp_profiles = _merge_named_profile_source(
+        repo_root,
+        config,
+        "mcp_profiles",
+        {**_mapping(profiles_config, "mcp"), **_mapping(config, "mcp_profiles")},
+        profile_root_key="mcp",
+        default_root="profiles/mcp",
+    )
+    sandbox_profiles = _merge_named_profile_source(
+        repo_root,
+        config,
+        "sandbox_profiles",
+        {**_mapping(profiles_config, "sandboxes"), **_mapping(config, "sandbox_profiles")},
+        profile_root_key="sandboxes",
+        default_root="profiles/sandboxes",
+    )
+    presets = _merge_named_profile_source(
+        repo_root,
+        config,
+        "presets",
+        {**_mapping(profiles_config, "presets"), **_mapping(config, "presets")},
+        profile_root_key="presets",
+        default_root="config/presets",
+    )
 
     try:
         task_bundle = load_task_bundle(repo_root, task_id, config=config)
     except TaskBundleError as exc:
         raise EvalConfigError(str(exc)) from exc
     task_execution = task_bundle.execution
-    agent_name = agent or _string(
-        task_execution,
+    preset_name = preset or _optional_string(task_execution, "preset")
+    preset_config: dict[str, Any] = {}
+    if preset_name:
+        preset_config = _mapping(presets, preset_name)
+        if not preset_config:
+            raise EvalConfigError(f"unknown run preset: {preset_name}")
+
+    agent_name = _select_name(
+        agent,
         "agent",
-        _string(defaults, "agent", "codex"),
-    )
-    profile_name = model_profile or _string(
         task_execution,
+        defaults,
+        preset_config,
+        "codex",
+        preset_name is not None,
+    )
+    profile_name = _select_name(
+        model_profile,
         "model_profile",
-        _string(defaults, "model_profile", "default"),
-    )
-    mcp_name = mcp_profile or _string(
         task_execution,
-        "mcp_profile",
-        _string(defaults, "mcp_profile", "none"),
+        defaults,
+        preset_config,
+        "default",
+        preset_name is not None,
     )
-    snapshot_mode = _string(defaults, "snapshot_mode", "working_tree")
+    mcp_name = _select_name(
+        mcp_profile,
+        "mcp_profile",
+        task_execution,
+        defaults,
+        preset_config,
+        "none",
+        preset_name is not None,
+    )
+    sandbox_name = _select_name(
+        sandbox_profile,
+        "sandbox_profile",
+        task_execution,
+        defaults,
+        preset_config,
+        "",
+        preset_name is not None,
+    )
+    snapshot_mode = _string(
+        task_execution,
+        "snapshot_mode",
+        _string(defaults, "snapshot_mode", "working_tree"),
+    )
     try:
         test_plan = TestPlan.from_mapping(task_bundle.test_plan)
     except ValueError as exc:
@@ -97,6 +153,12 @@ def resolve_run(
     mcp_config = _mapping(mcp_profiles, mcp_name)
     if not agent_config:
         raise EvalConfigError(f"unknown agent profile: {agent_name}")
+    if sandbox_name and sandbox_name != "inline":
+        sandbox_config = _mapping(sandbox_profiles, sandbox_name)
+        if not sandbox_config:
+            raise EvalConfigError(f"unknown sandbox profile: {sandbox_name}")
+    else:
+        sandbox_config = _mapping(config, "sandbox")
     if not evaluator_agent_config:
         raise EvalConfigError(f"unknown evaluator agent profile: {evaluator_agent_name}")
     if not model_config:
@@ -169,6 +231,7 @@ def resolve_run(
         verify=task_bundle.verify,
         test_plan=test_plan,
         sandbox=sandbox_config,
+        sandbox_profile=sandbox_name or "inline",
         snapshot_mode=snapshot_mode,
         game_engine_root=game_engine_root,
         dsh_root=dsh_root,
@@ -179,7 +242,29 @@ def resolve_run(
         evaluator_agent_profile=evaluator_agent_profile,
         resource_specs=resource_specs,
         task_bundle=task_bundle.to_dict(),
+        preset=preset_name,
     )
+
+
+def _select_name(
+    explicit: str | None,
+    key: str,
+    task_execution: Mapping[str, Any],
+    defaults: Mapping[str, Any],
+    preset: Mapping[str, Any],
+    fallback: str,
+    has_explicit_preset: bool,
+) -> str:
+    """Resolve one selector without duplicating low-level profile fields."""
+    if explicit is not None:
+        return explicit
+    if has_explicit_preset and key in preset:
+        return _string(preset, key, fallback)
+    if key in task_execution:
+        return _string(task_execution, key, fallback)
+    if key in preset:
+        return _string(preset, key, fallback)
+    return _string(defaults, key, fallback)
 
 
 def _merge_named_profile_source(
@@ -187,12 +272,18 @@ def _merge_named_profile_source(
     config: Mapping[str, Any],
     inline_key: str,
     root_value: Mapping[str, Any],
+    *,
+    profile_root_key: str | None = None,
+    default_root: str | None = None,
 ) -> dict[str, Any]:
     """Load external profile files and overlay inline legacy definitions."""
     merged: dict[str, Any] = {}
     profile_roots = _mapping(config, "profile_roots")
-    default_root = "profiles/agents" if inline_key == "agents" else "profiles/models"
-    raw_root = profile_roots.get(inline_key, default_root)
+    root_key = profile_root_key or inline_key
+    fallback_root = default_root or (
+        "profiles/agents" if inline_key == "agents" else "profiles/models"
+    )
+    raw_root = profile_roots.get(root_key, fallback_root)
     root = Path(str(raw_root))
     if not root.is_absolute():
         root = repo_root / root

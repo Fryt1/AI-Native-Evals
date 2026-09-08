@@ -14,7 +14,7 @@
 │  ├─ prompt.md                 ├─ profiles/agents/*.yaml            │
 │  ├─ task.yaml                 ├─ profiles/models/*.yaml            │
 │  ├─ rubric.yaml               ├─ config/eval.yaml                  │
-│  ├─ resources[]               └─ mcp_profiles                     │
+│  ├─ resources[]               └─ Profile catalogs                  │
 │  └─ test_plan/checks[]                                             │
 │              │                                                     │
 │              ▼                                                     │
@@ -74,7 +74,7 @@ uv run ai-native-evals run execute structured-report-contract --agent dsh
 
 ### 2. Agent Profile：描述“怎么启动一个 Agent”
 
-`profiles/agents/codex.yaml` 和 `profiles/agents/dsh.yaml`/`dsh-release.yaml` 只描述外部运行时：
+`profiles/agents/*.yaml` 只描述外部运行时；`profiles/models/*.yaml` 描述模型，`profiles/mcp/*.yaml` 描述工具，`profiles/sandboxes/*.yaml` 描述隔离，`config/presets/*.yaml` 只绑定选择器：
 
 ```yaml
 id: dsh
@@ -203,9 +203,12 @@ Evaluator 是可复用实现，Task 只填不同的输入与期望值。
 ## 配置的职责边界
 
 ```text
-config/eval.yaml       全局路径、默认值、Sandbox 限制、MCP registry
+config/eval.yaml       唯一总入口：路径、默认选择器、Profile 目录
 profiles/agents/       Agent 镜像、adapter、entrypoint、workdir
 profiles/models/       模型、provider、协议、推理强度
+profiles/mcp/          MCP 工具和宿主服务
+profiles/sandboxes/    Docker/WSL 隔离参数
+config/presets/        常用 Agent + Model + MCP + Sandbox 组合
  tasks/<id>/task.yaml  Task resources、TestPlan、默认能力偏好
  tasks/<id>/prompt.md  被测 Agent Prompt
  tasks/<id>/rubric.yaml Quality Judge Rubric

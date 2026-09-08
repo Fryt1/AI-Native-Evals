@@ -73,3 +73,27 @@ def test_prepare_run_writes_snapshot_and_manifest(tmp_path: Path) -> None:
     assert manifest["paths"]["project"] == str(run_dir / "workspace" / "game-engine")
     assert manifest["paths"]["workspace"] == str(run_dir / "workspace")
     assert manifest["snapshots"]["game_engine"]["dirty"] is False
+
+
+def test_preset_selectors_can_be_overridden_without_mixing_profile_details(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    raw = config.read_text(encoding="utf-8")
+    raw += """
+profile_roots:
+  agents: D:/missing-agents
+  models: D:/missing-models
+  mcp: D:/missing-mcp
+  sandboxes: D:/missing-sandboxes
+  presets: presets
+presets:
+  dsh: {agent: codex, model_profile: deepseek, mcp_profile: blender, sandbox_profile: inline}
+sandbox: {read_only_root: true}
+"""
+    config.write_text(raw, encoding="utf-8")
+    (tmp_path / "presets").mkdir()
+    spec = resolve_run(tmp_path, "task-001", config_path=config, preset="dsh")
+
+    assert spec.agent == "codex"
+    assert spec.model_profile == "deepseek"
+    assert spec.mcp_profile == "blender"
+    assert spec.sandbox_profile == "inline"
