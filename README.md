@@ -34,6 +34,12 @@ Run Orchestrator
 组成；Evaluator 实现复用，Task 只提供目标、输入和 Rubric。详见
 `docs/EVALUATION_PIPELINE.md` 和 `docs/TEST_PLANS.md`。
 
+## 中文上手
+
+- [项目与 Task 编写指南](docs/PROJECT_GUIDE_CN.md)：目录职责、Task 配置、TestPlan、Check、Evaluator、Rubric，以及从定义到执行的完整步骤。
+- [评测管线](docs/EVALUATION_PIPELINE.md)：Workspace、三类 Evaluator 和 Verdict 的数据流。
+- [离线 Sandbox 缓存](docs/OFFLINE_SANDBOX_CACHE.md)：本地镜像、依赖缓存和离线构建。
+
 ## 目录
 
 ```text
