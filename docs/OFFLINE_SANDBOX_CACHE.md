@@ -22,7 +22,7 @@ Blender MCP API:   MCP v1 dependencies in cache/python/blender-mcp
 Comfy MCP:         0.10.0
 Comfy CLI:         1.18.0
 Gateway:           ai-native-llm-gateway:local
-Agent images:      ai-native-codex-agent:local, ai-native-codex-agent:all-mcp
+Agent images:      ai-native-codex-agent:local (bundles the MCP runtimes)
 DSH image:         optional ai-native-dsh-agent:local (source) / ai-native-dsh-agent:release (published CLI)
 ```
 
@@ -46,7 +46,7 @@ This will:
 4. save the local Docker images to `cache/docker/sandbox-images.tar`;
 5. write a hash-checked `cache/manifest.json`.
 
-To intentionally regenerate Python locks from a known-good all-MCP image:
+To intentionally regenerate Python locks from a known-good Codex image:
 
 ```powershell
 pwsh -NoProfile -File .\tools\prepare-offline-cache.ps1 -RegenerateLocks
@@ -74,12 +74,6 @@ Docker daemon.
 pwsh -NoProfile -File .\tools\build-sandbox-images.ps1 `
   -Distro Ubuntu-20.04 `
   -Offline
-
-# Include Blender MCP and Comfy MCP in the Agent image:
-pwsh -NoProfile -File .\tools\build-sandbox-images.ps1 `
-  -Distro Ubuntu-20.04 `
-  -Offline `
-  -IncludeBlenderMcp
 ```
 
 The offline build loads the Docker archive first and then uses

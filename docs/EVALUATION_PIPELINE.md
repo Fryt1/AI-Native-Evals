@@ -24,8 +24,7 @@ TaskSpec
 ```text
 EvalRuns/<run-id>/
 └── workspace/
-    ├── game-engine/       # per-run project snapshot and Agent working tree
-    ├── ai-native-dsh/      # per-run DSH snapshot, when present
+    ├── <mount>/            # one per Task-declared resource; absent if none declared
     ├── output/             # candidate outputs
     ├── scratch/            # temporary working files
     ├── evidence/           # evaluator-owned check results and verdicts
@@ -33,9 +32,11 @@ EvalRuns/<run-id>/
     └── agent-config/       # run-scoped MCP configuration
 ```
 
-The Docker subject container mounts this whole `workspace` at `/workspace` and
-runs with `/workspace/game-engine` as its working directory. Host DCCs should
-write through the resolved Windows Workspace path recorded in the manifest.
+The Docker subject container mounts this whole `workspace` at `/workspace`. Its
+working directory is the Agent profile's own `workdir`, not a fixed project path
+-- a Task that declares no resource has no project directory at all. Host DCCs
+should write through the resolved Windows Workspace path recorded in the
+manifest.
 
 After the subject exits, the Workspace is treated as frozen. Outcome and
 Quality evaluators mount the relevant children read-only. They may write only

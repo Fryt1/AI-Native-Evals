@@ -5,3 +5,6 @@ gateway_image: ai-native-llm-gateway:local
 read_only_root: true
 memory: 8g
 pids_limit: 512
+# Wall-clock limit for the subject Agent. A hung run is stopped and reclaimed
+# instead of holding its container and its caller forever.
+agent_timeout_seconds: 1800

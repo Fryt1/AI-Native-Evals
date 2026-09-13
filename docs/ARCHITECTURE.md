@@ -57,7 +57,7 @@
 目录 `tasks/<task-id>/` 是一个可提交、可复用的测试单元：
 
 ```text
-tasks/structured-report-contract/
+tasks/codex-file-smoke/
 ├── task.yaml       # TestPlan、资源、运行时能力偏好
 ├── prompt.md       # 给被测 Agent 的任务要求
 └── rubric.yaml     # Quality Judge 的评分标准（可选）
@@ -66,8 +66,8 @@ tasks/structured-report-contract/
 Task 不引用 Codex API，也不要求 DSH。`execution.agent` 只是默认值，命令行可以用 `--agent dsh` 覆盖。同一个 Task 直接对比两个 Agent；默认的 Outcome/Quality Evaluator 仍使用 `defaults.evaluator_agent`，不会因为被测 Agent 改成 DSH 就改变评分者：
 
 ```powershell
-uv run ai-native-evals run execute structured-report-contract --agent codex
-uv run ai-native-evals run execute structured-report-contract --agent dsh
+uv run ai-native-evals run execute codex-file-smoke --agent codex
+uv run ai-native-evals run execute codex-file-smoke --agent dsh
 ```
 
 两次运行使用相同的 Prompt、Fixture、TestPlan、Evaluator、资源快照规则和时间限制；唯一变化是被测 Agent Profile，`evaluator_agent_profile` 保持固定。
@@ -98,7 +98,7 @@ Adapter 是真正的外部协议 seam：
 - `DshAcpAdapter`：通过标准 ACP `initialize → session/new → session/prompt → session/close` 驱动 DSH；MCP 使用标准 ACP `McpServer` 声明，不使用私有 socket 客户端。
 - 新 Agent 只需实现 `AgentAdapter.run(AgentLaunchSpec)`，不需要改 Task、TestPlan 或 Scorer。
 
-`AI-Native-DSH` 不是这里的 DSH Agent 实现；真正的 DSH 源仓库是 `D:\work\AI-Native\dsh`，镜像构建从那里读取。
+`AI-Native-DSH` 不是这里的 DSH Agent 实现。DSH Agent 镜像从真正的 DSH 源仓库构建，该仓库的位置由 `config/eval.yaml` 的 `paths.source_roots.dsh_runtime` 指定，不在本仓库内、也不在本文档中固定。
 
 ### 4. SandboxRuntime：只负责隔离，不理解 Agent
 

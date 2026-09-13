@@ -139,9 +139,14 @@ def run_evaluator_agent(
         )
     )
     if gateway_env_file is None:
+        # Follow the provider the subject run used, so an evaluator grades
+        # through the same upstream rather than whichever default is ambient.
         runtime = manifest.get("runtime")
+        declared_env_file = run.get("provider_env_file")
         if isinstance(runtime, dict) and runtime.get("gateway_env_file"):
             gateway_env_file = runtime["gateway_env_file"]
+        elif declared_env_file:
+            gateway_env_file = declared_env_file
         else:
             root = Path(repo_root).resolve() if repo_root else Path(__file__).resolve().parents[3]
             gateway_env_file = root / "config" / ".env.local"

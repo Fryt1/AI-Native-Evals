@@ -5,18 +5,30 @@
 1. 每个目录到底负责什么？
 2. 新增一个测试 Task 时，具体写哪些文件、执行什么命令？
 
-## 一、仓库之间的关系
+## 一、与外部仓库的关系
+
+本仓库是一个**独立的评测框架**。它不 import 任何被测项目的代码，也不假设
+被测仓库位于什么位置；两者之间只有一条运行时的数据通道：
 
 ```text
-D:\work\AI-Native\
-├── AI-Native-Evals       # 评测框架 + Task + Adapter + Evaluator
-├── AI-Native-Game-Engine # 被测项目源仓库（只有 Task 声明时才快照）
-├── AI-Native-DSH         # 我们的 Game Engine/DSH 插件源（按 Task 声明才快照）
-├── dsh                   # 真正的 DeepSeek Harness 源仓库，用来构建 DSH Agent 镜像
-└── EvalRuns              # 仓库外，每次运行的完整现场
+Task 声明 resources  →  运行时创建快照  →  Agent 在容器内看到挂载目录
 ```
 
-`AI-Native-Evals` 不把其他仓库 import 成评测框架的一部分。它只在一次 Run 准备时，根据 Task 的 `resources` 声明创建快照；没有声明就不复制。
+三点约束：
+
+1. **没有声明就不复制。** Task 写 `resources: []` 时，workspace 里不会有任何
+   被测项目目录，评测框架也不会去查找它。
+2. **位置由本机配置决定，不写死在代码里。** 源仓库位置来自
+   `config/eval.yaml` 的 `paths.source_roots`（可指向任意路径），不是固定布局。
+3. **只有被快照的那一份参与评测。** 快照在 Run 准备时创建，之后即使源仓库
+   变化，该 Run 的记录也不会变。
+
+被测项目的种类、数量、位置都属于**本机部署细节**，因此不出现在本文档中。
+要看当前这台机器解析到了哪些源仓库：
+
+```powershell
+uv run ai-native-evals config show
+```
 
 ## 二、目录职责
 
@@ -29,7 +41,8 @@ AI-Native-Evals/
 │
 ├── profiles/
 │   ├── agents/            # Codex、DSH 等 Agent 的启动 profile
-│   └── models/            # 模型、provider、协议、推理强度
+│   ├── providers/         # 上游：base_url 凭据引用、协议、模型显示名
+│   └── models/            # 历史 model binding（provider+model+协议+推理）
 │
 ├── tasks/
 │   └── <task-id>/
@@ -70,15 +83,16 @@ AI-Native-Evals/
 
 ```yaml
 paths:
+  # 被测源仓库的位置：本机部署细节，写在 config/eval.local.yaml（被 gitignore）；
+  # 被跟踪的 eval.yaml 里保持为空 {}，因此仓库可以直接共享。
   source_roots:
-    game_engine: ../game-engine
-    dsh: ../AI-Native-DSH
-    dsh_runtime: ../dsh
-  runs_root: ../EvalRuns
+    <resource-source-id>: <path-to-repository>
+  # 运行现场；通常在仓库外，且不进 git。
+  runs_root: <path-to-runs-directory>
 
 defaults:
   agent: codex
-  model_profile: sub2api-deepseek
+  provider: sub2api          # 上游名称，见 profiles/providers/
   mcp_profile: none
 
 profile_roots:
@@ -88,6 +102,55 @@ profile_roots:
   sandboxes: profiles/sandboxes
   presets: config/presets
 ```
+
+`config/eval.yaml` 是**被跟踪**的，只描述框架本身，不含任何宿主路径。本机路径
+写在 `config/eval.local.yaml`（被 gitignore），它按 key 覆盖前者：
+
+```powershell
+copy config\eval.local.example.yaml config\eval.local.yaml
+# 再填入本机的仓库位置
+```
+
+`source_roots` 的键就是 Task 里 `resources[].source` 引用的名字。新增一个被测
+项目只需在**本地**文件里加一条，并在 Task 中声明；框架本身不需要改代码，也不
+需要知道这些仓库彼此的位置关系。
+
+### 三种 source 形态
+
+```yaml
+source_roots:
+  # 1. 本机目录（最快，不走网络）
+  local_project: ../my-project
+
+  # 2. 远程 Git（换台机器 / CI 也能跑）：首次 clone 到 cache/repos/，之后复用
+  shared_project: https://github.com/org/repo.git
+
+  # 3. 远程 + 默认 ref（Task 不必重复写）
+  pinned_project:
+    url: https://github.com/org/repo.git
+    ref: v1.2.0
+```
+
+远程快照会被记录**解析到的 commit**，所以事后能回答"这次评测跑的是哪份代码"。
+
+缓存**默认复用**，不会被远端 push 悄悄改变输入；要更新用：
+
+```powershell
+uv run ai-native-evals run execute my-task --refresh-sources
+```
+
+### CI 上不需要改任何文件
+
+环境变量优先级高于配置文件：
+
+```bash
+AI_NATIVE_EVALS_SOURCE_MY_PROJECT=https://github.com/org/repo.git
+AI_NATIVE_EVALS_SOURCE_REF_MY_PROJECT=v1.2.0    # 可选
+```
+
+CI 因此可以在不修改仓库的前提下，把逻辑 id 指向远程代码。若远端暂时不可达而
+本地已有缓存，会**继续用缓存**（只有显式 `--refresh-sources` 失败才算失败）。
+
 
 Task 自己放在 `tasks/<id>/`。加载优先级是：
 
@@ -104,7 +167,9 @@ config/eval.yaml 中的旧 tasks.<id>
 ```yaml
 id: dsh-release
 agent: dsh-release
-model_profile: sub2api-deepseek
+provider: sub2api
+model: deepseek/deepseek-v4.1-flash
+reasoning_effort: high
 mcp_profile: none
 sandbox_profile: docker-default
 ```
@@ -214,10 +279,10 @@ passing_score: 0.8
 
 ```yaml
 resources:
-  - id: game-engine
+  - id: my-project            # 本 Task 内的标识
     kind: repository
-    source: game_engine
-    mount: game-engine
+    source: my_project_source # 对应 config/eval.yaml 的 paths.source_roots 键
+    mount: my-project         # 容器内 /workspace/<mount> 的名字
     # 可选：ref: main
 
   - id: starter-fixture
@@ -235,7 +300,8 @@ resources:
 | `fixture` | 复制可复现输入目录 |
 | `host_service` | 不复制，只记录宿主服务信息；适合 Blender/UE5/MCP 服务 |
 
-对于 Blender/UE5，DCC 程序留在 Windows 主机；Task 可以声明 `game-engine` 快照，Agent 容器通过标准 MCP 访问运行中的宿主 DCC。
+对于 Blender/UE5，DCC 程序留在 Windows 主机；Task 可以声明一个项目快照作为
+Agent 的工作目录，Agent 容器通过标准 MCP 访问运行中的宿主 DCC。
 
 ## 六、如何切换 Agent / 模型
 
@@ -250,15 +316,17 @@ profiles/agents/codex-dcc.yaml
 模型 Profile：
 
 ```text
-profiles/models/sub2api-deepseek.yaml
+profiles/providers/sub2api.yaml
 ```
 
 同一 Task 对比：
 
 ```powershell
-uv run ai-native-evals run execute my-task --agent codex --model-profile sub2api-deepseek
-uv run ai-native-evals run execute my-task --agent dsh --model-profile sub2api-deepseek
+uv run ai-native-evals run execute my-task --agent codex --provider sub2api --model gpt-5.6-luna --reasoning-effort high
+uv run ai-native-evals run execute my-task --agent dsh   --provider sub2api --model gpt-5.6-luna --reasoning-effort high
 ```
+
+`--provider` 选定上游，`--model` 必须是该上游 `/v1/models` 实际列出的模型，`--reasoning-effort` 必须是该 Provider 与该 Agent 都接受的等级。三者任一不合法都会在启动 Docker 前报错。历史写法 `--model-profile <binding>` 仍然可用。
 
 这不会改本机其他 Codex 会话的模型配置。每次 Run 都把 Profile 和模型决议写入自己的 `run-manifest.json`，Docker 只拿到这次 Run 的配置。
 
@@ -272,7 +340,26 @@ uv run ai-native-evals task show my-task
 uv run ai-native-evals task validate my-task
 uv run ai-native-evals agent list
 uv run ai-native-evals model list
+uv run ai-native-evals provider list
+uv run ai-native-evals provider models sub2api
 uv run ai-native-evals doctor
+```
+
+`doctor` 看**仓库接线**，`preflight` 看**这台机器**：
+
+```powershell
+uv run ai-native-evals preflight my-task     # 工具链 + Docker + 凭据 + 镜像 + MCP host
+```
+
+每项状态为 `ok` / `missing` / `unknown`。`missing` 会阻止运行，`unknown`
+不会 —— **探测不到不等于东西不存在**。`run execute` 会自动先跑 preflight。
+
+`provider list` 只读本地配置、不联网；`provider models <id>` 实时询问上游
+`/v1/models`，因此它就是"现在到底有哪些模型可用"的权威答案。选出模型后即可
+直接用于 Run，不必先建 model binding：
+
+```powershell
+uv run ai-native-evals run plan my-task --provider sub2api --model gpt-5.6-luna
 ```
 
 只解析 TestPlan，不创建 Run：
@@ -302,11 +389,10 @@ uv run ai-native-evals run digest <run-id>
 ## 八、一次 Run 产生什么
 
 ```text
-D:\work\AI-Native\EvalRuns\<run-id>\
+<EvalRuns>/<run-id>/
 ├── run-manifest.json
 └── workspace/
-    ├── game-engine/          # 只有 Task 声明 resource 才出现
-    ├── ai-native-dsh/        # 只有 Task 声明 dsh resource 才出现
+    ├── <mount>/              # 每个 Task 声明的 resource 一个目录；没声明就没有
     ├── output/               # 被测 Agent 的候选产物
     ├── scratch/              # 临时工作
     ├── artifacts/            # 中间/导出物

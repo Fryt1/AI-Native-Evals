@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from ai_native_evals.evaluation import runner
+from ai_native_evals.evaluation.contracts import CheckResult
 from ai_native_evals.runs.agent_sandbox import EvaluatorAgentResult
 
 
@@ -232,3 +233,161 @@ def test_invalid_plan_fails_before_any_check(tmp_path: Path) -> None:
     with pytest.raises(runner.EvaluationError):
         # The manifest plan is structurally invalid and should not be silently skipped.
         runner.evaluate_run(run_dir)
+
+
+# --------------------------------------------------------------------------
+# Aggregation policy: "we could not measure it" is not "the Agent failed".
+# --------------------------------------------------------------------------
+
+
+def _crashing_evaluator(context, check):  # type: ignore[no-untyped-def]
+    raise RuntimeError("evaluator could not run")
+
+
+def _passing_evaluator(context, check):  # type: ignore[no-untyped-def]
+    return CheckResult(
+        check_id=check.id,
+        phase=check.phase,
+        evaluator=check.evaluator,
+        status="passed",
+        passed=True,
+        score=1.0,
+    )
+
+
+runner.register_evaluator("test.crashes.v1")(_crashing_evaluator)
+runner.register_evaluator("test.passes.v1")(_passing_evaluator)
+
+
+def test_measured_failure_is_still_a_definitive_fail(tmp_path: Path) -> None:
+    """The policy fix must not soften failures we actually observed."""
+    run_dir, _ = _manifest(
+        tmp_path,
+        {
+            "checks": [
+                {
+                    "id": "missing",
+                    "phase": "outcome",
+                    "evaluator": "script.file_exists.v1",
+                    "input": {"path": "/workspace/output/absent.txt"},
+                }
+            ]
+        },
+    )
+
+    report = runner.evaluate_run(run_dir)
+
+    assert report["checks"][0]["status"] == "failed"
+    assert report["decision"] == "fail"
+    assert report["outcome_score"] == 0.0
+
+
+@pytest.mark.parametrize(
+    ("on_error", "expected_status", "expected_decision", "expected_outcome"),
+    [
+        ("fail", "error", "fail", 0.0),
+        ("review", "review", "review", None),
+        ("skip", "skipped", "review", None),
+    ],
+)
+def test_hard_check_that_cannot_run_follows_on_error_policy(
+    tmp_path: Path,
+    on_error: str,
+    expected_status: str,
+    expected_decision: str,
+    expected_outcome: float | None,
+) -> None:
+    """A crashed evaluator must not be recorded as a normal 0 score.
+
+    With on_error=review or skip the verdict is undetermined, so the score is
+    unavailable rather than a fabricated zero that would read as Agent failure.
+    """
+    run_dir, _ = _manifest(
+        tmp_path,
+        {
+            "checks": [
+                {
+                    "id": "must-work",
+                    "phase": "outcome",
+                    "evaluator": "test.crashes.v1",
+                    "on_error": on_error,
+                }
+            ]
+        },
+    )
+
+    report = runner.evaluate_run(run_dir)
+
+    assert report["checks"][0]["status"] == expected_status
+    assert report["decision"] == expected_decision
+    assert report["outcome_score"] == expected_outcome
+
+
+def test_uncertain_result_policy_decides_an_undetermined_run(tmp_path: Path) -> None:
+    """uncertain_result used to be parsed, persisted, and then ignored."""
+    report = runner.evaluate_run(
+        _manifest(
+            tmp_path,
+            {
+                "uncertain_result": "fail",
+                "checks": [
+                    {"id": "ran", "phase": "outcome", "evaluator": "test.passes.v1"},
+                    {
+                        "id": "could-not-run",
+                        "phase": "quality",
+                        "evaluator": "test.crashes.v1",
+                        "on_error": "review",
+                        "required": False,
+                    },
+                ],
+            },
+        )[0]
+    )
+
+    assert report["decision"] == "fail"
+    # The check that did produce a verdict still contributes its score.
+    assert report["outcome_score"] == 1.0
+
+
+def test_run_with_no_verdict_at_all_is_never_a_pass(tmp_path: Path) -> None:
+    report = runner.evaluate_run(
+        _manifest(
+            tmp_path,
+            {
+                "checks": [
+                    {
+                        "id": "skipped",
+                        "phase": "outcome",
+                        "evaluator": "test.crashes.v1",
+                        "on_error": "skip",
+                    }
+                ]
+            },
+        )[0]
+    )
+
+    assert report["decision"] == "review"
+    assert report["outcome_score"] is None
+
+
+def test_unregistered_evaluator_honours_on_error_policy(tmp_path: Path) -> None:
+    """The "evaluator does not exist" path must not bypass the task's policy."""
+    report = runner.evaluate_run(
+        _manifest(
+            tmp_path,
+            {
+                "checks": [
+                    {
+                        "id": "typo",
+                        "phase": "outcome",
+                        "evaluator": "script.does_not_exist.v9",
+                        "on_error": "review",
+                    }
+                ]
+            },
+        )[0]
+    )
+
+    assert report["checks"][0]["status"] == "review"
+    assert report["decision"] == "review"
+    assert report["outcome_score"] is None

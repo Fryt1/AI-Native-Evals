@@ -56,6 +56,10 @@ class RunSpec:
     resource_specs: tuple[ResourceSpec, ...] = ()
     task_bundle: dict[str, Any] = field(default_factory=dict)
     preset: str | None = None
+    # Which upstream served this run, and the env file holding its base URL plus
+    # credential. Recorded so a comparison can tell two providers apart.
+    provider: str | None = None
+    provider_env_file: str | None = None
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
     def to_dict(self) -> dict[str, Any]:
@@ -92,6 +96,8 @@ class RunSpec:
             "resource_specs": [spec.to_dict() for spec in self.resource_specs],
             "task_bundle": self.task_bundle,
             "preset": self.preset,
+            "provider": self.provider,
+            "provider_env_file": self.provider_env_file,
             "created_at": self.created_at,
         }
         return payload

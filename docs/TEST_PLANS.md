@@ -71,3 +71,35 @@ run's persisted Workspace/Evidence in dependency order. Agent-backed checks use
 the shared Docker evaluator sandbox; script checks run at the host/verifier
 boundary and write durable CheckResult files. The plan data model remains
 separate from evaluator implementations.
+
+## What decides a Run
+
+Aggregation separates a **determinate** verdict from an **undetermined** one.
+That distinction is the difference between "this Agent failed the task" and
+"this task could not be measured" -- they must never collapse into the same
+result, because a broken evaluator would otherwise be recorded as an Agent
+scoring zero.
+
+`on_error` says how an evaluator that could not run is read:
+
+| `on_error` | check status | counts toward the verdict |
+| --- | --- | --- |
+| `fail` (default) | `error` | yes, as a determinate failure |
+| `review` | `review` | no; the Run becomes undetermined |
+| `skip` | `skipped` | no; the check is dropped from the verdict |
+
+`uncertain_result` (`review` by default, or `fail`) decides what an undetermined
+Run is reported as. Both error producers apply `on_error` identically: the
+exception boundary in `_execute_check` and `_error_result`, which covers an
+unregistered evaluator or a missing required config.
+
+Scoring follows the same rule:
+
+- `outcome_score` averages only the outcome checks that produced a determinate
+  verdict, so an unmeasurable check yields `null` rather than a fabricated `0`.
+- `quality_score` and `process_score` average the checks that returned a score.
+- A Run with **no** determinate verdict at all is never reported as `pass`.
+
+Decision order: hard-check failure, then the quality threshold, then
+`uncertain_result`, otherwise `pass`.
+

@@ -8,13 +8,17 @@ mutated only through standard MCP servers.
 
 ```text
 Windows 11 + WSL2 Docker (Ubuntu-20.04 engine; Docker Desktop 29.7.2)
-Agent image: ai-native-codex-agent:all-mcp (Codex 0.153.4 + official servers)
+Agent image: ai-native-codex-agent:local (Codex 0.153.4 + official servers)
 Gateway:    ai-native-llm-gateway:local
-Model:      deepseek/deepseek-v4-flash via local gateway / Sub2API (responses)
-Blender:    E:\blender\blender.exe 5.2.1 + Blender Lab MCP Add-on bridge :9876
-Unreal:     D:\UnrealEngine\ue5.8.2\UnrealEngine (ModelContextProtocol + AllToolsets)
+Model:      via local gateway / Sub2API (responses)
+Blender:    <Blender install> 5.2.1 + Blender Lab MCP Add-on bridge :9876
+Unreal:     <UE5 install> (ModelContextProtocol + AllToolsets)
 UE project: fixtures/ue5/actor-fixture-mcp (this repo, plugins pre-enabled)
 ```
+
+Host application paths are local deployment details; supply them through
+`BLENDER_EXECUTABLE`, `AI_NATIVE_EVALS_UNREAL_EXE` and the other environment
+variables named by `tools/start-eval-hosts.ps1`.
 
 ## Provenance of the helpers used for the E2E runs
 
@@ -23,7 +27,7 @@ Blender bridge launch (host):
 ```powershell
 # add-on installed under Blender 5.2; the vendored project helper starts the
 # in-Blender socket bridge without GUI:
-E:\blender\blender.exe --background --python <game-engine>/artifacts/leopard2a4/mcp_bootstrap.py
+& $env:BLENDER_EXECUTABLE --background --python <project-snapshot>\artifacts\leopard2a4\mcp_bootstrap.py
 ```
 
 UE MCP launch (host) uses the MCP plugin command-line switches that were

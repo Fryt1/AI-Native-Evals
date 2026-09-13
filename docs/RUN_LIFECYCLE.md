@@ -26,11 +26,11 @@ prepared ── start ──► running ── wait ──► completed/failed
 ```powershell
 # 发现和验证定义
 uv run ai-native-evals task list
-uv run ai-native-evals task validate structured-report-contract
-uv run ai-native-evals run plan structured-report-contract
+uv run ai-native-evals task validate codex-file-smoke
+uv run ai-native-evals run plan codex-file-smoke
 
 # 快照并创建一个 Run
-uv run ai-native-evals run prepare structured-report-contract --agent codex
+uv run ai-native-evals run prepare codex-file-smoke --agent codex
 
 # 启动、查看、等待
 uv run ai-native-evals run start <run-id>
@@ -78,7 +78,7 @@ prepare_run
   └── write run-manifest.json
 ```
 
-`resources: []` 的 Task 不会出现 `workspace/game-engine`。这解决了“所有测试都被默认绑到 Game Engine/DSH”的问题。
+`resources: []` 的 Task 不会在 workspace 里出现任何项目目录。这解决了“所有测试都被默认绑到某个被测项目”的问题：被快照什么，完全由 Task 自己声明。
 
 ## Workspace 结构
 
@@ -101,12 +101,12 @@ EvalRuns/<run-id>/
 {
   "snapshots": {
     "resources": {
-      "game-engine": {"resource_id": "game-engine", "kind": "repository", "...": "..."}
+      "<resource-id>": {"resource_id": "<resource-id>", "kind": "repository", "...": "..."}
     }
   },
   "paths": {
     "resources": {
-      "game-engine": "D:\\work\\AI-Native\\EvalRuns\\...\\workspace\\game-engine"
+      "<resource-id>": "<run-dir>/workspace/<mount>"
     }
   }
 }
@@ -137,10 +137,10 @@ Windows Blender/UE5 不进入这个容器。它们仍在宿主机运行，Agent 
 
 ### DSH
 
-DSH Agent 可以选择 `profiles/agents/dsh.yaml`（本地源码）或 `profiles/agents/dsh-release.yaml`（发布包）：
+DSH Agent 可以选择 `profiles/agents/dsh.yaml`（本地源码）或 `profiles/agents/dsh-release.yaml`（发布包）。源码镜像由一个外部 DSH 源仓库构建，该仓库位置由本机 `config/eval.yaml` 指定，不在本仓库内：
 
 ```text
-D:\work\AI-Native\dsh
+<DSH source repository>          # 位置见 config/eval.yaml
     ↓ build
 ai-native-dsh-agent:local
     ↓ run in Docker

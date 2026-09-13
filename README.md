@@ -32,6 +32,7 @@ EvaluationReport + Inspect Transcript/Viewer
 完整解释：
 
 - [架构说明](docs/ARCHITECTURE.md)
+- [AI-Native Eval Console 产品与交互规格](docs/EVAL_CONSOLE_SPEC.md)
 - [项目与 Task 编写指南](docs/PROJECT_GUIDE_CN.md)
 - [Run 生命周期](docs/RUN_LIFECYCLE.md)
 - [评测管线](docs/EVALUATION_PIPELINE.md)
@@ -44,7 +45,7 @@ EvaluationReport + Inspect Transcript/Viewer
 ```text
 config/                 全局路径、默认值、Sandbox 限制、MCP registry
 profiles/agents/        Codex/DSH 等 Agent Profile
-profiles/models/        模型/Provider/协议/推理强度 Profile
+profiles/models/        Model Binding（Provider + Model + 协议/推理强度）
 profiles/mcp/           MCP/宿主服务 Profile
 profiles/sandboxes/     Docker/WSL Sandbox Profile
 config/presets/         常用运行组合（只绑定 Profile id）
@@ -61,13 +62,51 @@ src/ai_native_evals/
 docker/                 Codex/DSH Agent 镜像定义
 tools/                  镜像、宿主 DCC、缓存和诊断脚本
 EvalRuns/               仓库外运行现场，不提交
+apps/eval-console/      React + TypeScript 可视化 Console
+src/ai_native_evals_console/  Console Read Model、Catalog、API
 ```
 
 ## 5 分钟上手
 
+### 一条命令
+
 ```powershell
-cd D:\work\AI-Native\AI-Native-Evals
+.\tools\eval.ps1 setup      # 安装 Python + 前端依赖
+.\tools\eval.ps1 check      # 体检：仓库接线 + 这台机器
+.\tools\eval.ps1 build      # 构建镜像（需要时）
+.\tools\eval.ps1 test       # 跑测试与 lint
+```
+
+`check` 是**跑之前该做的事**：它先验证仓库接线（`doctor`），再验证这台机器
+（`preflight`），最后给出「能不能跑」的结论。
+
+```text
+=== Repository wiring ===      profile 能否解析、Task 是否存在
+=== Machine environment ===    工具链 / Docker / 凭据 / 镜像 / MCP host
+=== Summary ===
+  repository wiring      ok
+  machine environment    ok
+  This machine can run an evaluation.
+```
+
+带 Task 时会额外检查该 Task 需要的镜像与 MCP host：
+
+```powershell
+.\tools\eval.ps1 check -Task codex-file-smoke -Preset codex-default
+```
+
+### 等价的分步命令
+
+```powershell
+cd <path-to-AI-Native-Evals>
+
+# 依赖：Python 侧 + 前端侧
 uv sync --dev
+pnpm install                 # 安装 Console 依赖（workspace 根命令）
+
+# 环境体检：这台机器到底能不能跑
+uv run ai-native-evals preflight                    # 工具链 / Docker / 凭据
+uv run ai-native-evals preflight codex-file-smoke   # 再加上该 Task 需要的镜像与 MCP host
 
 # 发现当前定义
 uv run ai-native-evals task list
@@ -79,13 +118,85 @@ uv run ai-native-evals preset list
 uv run ai-native-evals config show
 uv run ai-native-evals doctor
 
+# Provider 与它实际提供的模型（实时询问上游 /v1/models）
+uv run ai-native-evals provider list
+uv run ai-native-evals provider models sub2api
+uv run ai-native-evals provider models sub2api --reasoning   # 逐模型探测合法 reasoning 等级
+
 # 验证一个 Task（不创建 Run）
-uv run ai-native-evals task validate structured-report-contract
-uv run ai-native-evals run plan structured-report-contract
+uv run ai-native-evals task validate codex-file-smoke
+uv run ai-native-evals run plan codex-file-smoke
 
 # Inspect wiring smoke（不调用真实模型）
 uv run inspect eval src/ai_native_evals/tasks/smoke.py@smoke --model mockllm/model
+
+# 构建并启动 AI-Native Eval Console
+pnpm build
+uv run ai-native-evals console
+# 或使用一键脚本：.\tools\console.ps1
+# 打开 http://127.0.0.1:8787/
 ```
+
+### 跑之前先体检
+
+`doctor` 检查**仓库接线**（profile 能否解析、Task 是否存在）；`preflight`
+检查**这台机器**（工具链、Docker、凭据、镜像、MCP host）。两者都要通过。
+
+```powershell
+uv run ai-native-evals preflight --json      # 机器可读
+```
+
+每一项有三种状态，区别很重要：
+
+```text
+ok       已验证可用
+missing  已确认缺失 —— 会阻止运行
+unknown  无法判定 —— 不阻止运行
+```
+
+`unknown` 不算失败：**探测不到不等于东西不存在**。Docker 没开、WSL distro
+名字不对，都会如实报 `unknown` 或 `missing` 并给出修复命令，而不是把一台好
+机器判成坏的。
+
+`run execute` 会自动先跑一次 preflight，不通过就拒绝启动（省掉一次注定失败的
+Docker 启动）；确实要强行启动时用 `--skip-preflight`。
+
+
+## AI-Native Eval Console
+
+Console 是本项目唯一的正式可视化前端，读取仓库外的 `EvalRuns`，不读取或修改 Agent 的全局配置。Inspect Viewer 仍只作为 Inspect 原始日志兼容工具，不是本项目的标准入口。
+
+```powershell
+pnpm install     # 安装 workspace 依赖（根目录一条命令即可）
+pnpm build
+uv run ai-native-evals console
+# 一键启动：.\tools\console.ps1
+```
+
+在 Console 的 `Runs` 页面点击“运行测试”，选择已有的 Task、Agent、Model、MCP、Sandbox 或 Preset。Console 会先展示 Run Plan，确认后才启动真实 Docker 评测。
+
+### 前端开发
+
+仓库根目录的 `package.json` 是 workspace 入口，转发到 `apps/eval-console`：
+
+```powershell
+pnpm install     # 安装依赖（必须）
+pnpm run dev     # Vite dev server -> http://127.0.0.1:5173/
+pnpm run build   # 构建并同步到 src/ai_native_evals_console/static/
+pnpm run test
+```
+
+`pnpm run dev` 需要 Console API 同时在跑，另开一个终端执行 `uv run ai-native-evals console`；
+Vite 启动时会自动探测 API，不可达会直接给出提示。
+
+> `apps/eval-console` 通过根目录的 `pnpm-workspace.yaml` 声明为 workspace 成员。
+> 没有这个文件时，根目录的 `pnpm install` 会因为根 manifest 本身没有依赖而
+> **报告成功却什么都不装**，直到 `pnpm build` 才失败。
+
+> `node_modules` 中是 Windows 原生二进制，请在 Windows 侧（PowerShell / cmd）使用 pnpm；
+> 在 WSL 中执行会报 `Cannot find native binding`。
+
+完整的页面、数据契约、安全边界和验收标准见：[Console 产品与交互规格](docs/EVAL_CONSOLE_SPEC.md)。
 
 ## 定义 Task
 
@@ -98,7 +209,7 @@ uv run ai-native-evals task new my-task
 然后只编辑：
 
 ```text
-D:\work\AI-Native\AI-Native-Evals\tasks\my-task\task.yaml
+tasks\my-task\task.yaml
 ```
 
 新增：
@@ -147,7 +258,7 @@ resources:
 uv run ai-native-evals compare my-task --agents codex,dsh-release --preset codex-default
 ```
 
-这两次运行复用相同的 Prompt、资源、MCP、超时、TestPlan 和 Rubric，只替换被测 Profile；Outcome Locator/Quality Judge 默认仍由 `codex` Profile 执行。模型通过 `--model-profile` 或 `profiles/models/*.yaml` 选择，不会修改本机其他 Codex 会话配置。
+这两次运行复用相同的 Prompt、资源、MCP、超时、TestPlan 和 Rubric，只替换被测 Profile；Outcome Locator/Quality Judge 默认仍由 `codex` Profile 执行。底层仍通过 `profiles/models/*.yaml` 的 Model Binding 解析；Console 将 Provider 和 Model 分开展示和选择，再映射到对应 Binding，不会修改本机其他 Codex 会话配置。
 
 ## Agent 接入
 
@@ -157,7 +268,7 @@ uv run ai-native-evals compare my-task --agents codex,dsh-release --preset codex
 
 ### DSH
 
-`profiles/agents/dsh.yaml`（本地源码）使用真正的 `D:\work\AI-Native\dsh` 源仓库构建 `ai-native-dsh-agent:local`；`profiles/agents/dsh-release.yaml` 使用发布的 DSH CLI 构建快速兼容镜像。容器内的 ACP runner 通过标准 ACP JSON-RPC 驱动 `dsh --profile acp`；MCP 使用标准 ACP `McpServer[]`，不使用 `mcp_socket_call.py` 或自定义 Blender/UE5 socket adapter。
+`profiles/agents/dsh.yaml`（本地源码）从一个外部 DSH 源仓库构建 `ai-native-dsh-agent:local`，该仓库位置由本机 `config/eval.yaml` 指定；`profiles/agents/dsh-release.yaml` 使用发布的 DSH CLI 构建快速兼容镜像。容器内的 ACP runner 通过标准 ACP JSON-RPC 驱动 `dsh --profile acp`；MCP 使用标准 ACP `McpServer[]`，不使用 `mcp_socket_call.py` 或自定义 Blender/UE5 socket adapter。
 
 构建：
 
@@ -186,7 +297,7 @@ Docker Agent
 ## 查看一次运行
 
 ```powershell
-uv run ai-native-evals run execute structured-report-contract --preset codex-default
+uv run ai-native-evals run execute codex-file-smoke --preset codex-default
 uv run ai-native-evals run status <run-id>
 uv run ai-native-evals run digest <run-id>
 ```

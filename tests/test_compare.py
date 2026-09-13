@@ -15,6 +15,8 @@ def test_compare_task_keeps_common_invariant_and_writes_report(tmp_path: Path, m
             model="test-model",
             model_provider="eval",
             model_profile="test-model-profile",
+            provider="sub2api",
+            reasoning_effort="high",
             mcp_profile="none",
             mcp_servers={},
             sandbox_profile="docker-default",

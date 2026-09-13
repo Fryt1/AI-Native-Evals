@@ -14,6 +14,7 @@ import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from .lifecycle import load_manifest, update_manifest
 
@@ -22,8 +23,16 @@ class DockerRuntimeError(RuntimeError):
     """Raised when the WSL-backed Docker runtime cannot manage a run."""
 
 
+class DockerTimeoutError(DockerRuntimeError):
+    """Raised when a Docker command exceeds its allotted time."""
+
+
 _DEFAULT_WSL_DISTRO = "Ubuntu-20.04"
 _DEFAULT_GATEWAY_IMAGE = "ai-native-llm-gateway:local"
+# No Docker call may block forever. `docker wait` overrides this with the run's
+# own Agent time limit, which is far longer by design.
+_DEFAULT_DOCKER_TIMEOUT_SECONDS = 300
+_DEFAULT_AGENT_TIMEOUT_SECONDS = 1800
 
 
 def start_docker_run(
@@ -58,9 +67,19 @@ def start_docker_run(
     gateway_image = gateway_image or os.environ.get(
         "AI_NATIVE_EVALS_GATEWAY_IMAGE", str(sandbox.get("gateway_image", _DEFAULT_GATEWAY_IMAGE))
     )
-    env_file = (gateway_env_file or Path(
-        os.environ.get("AI_NATIVE_EVALS_GATEWAY_ENV_FILE", str(repo_root / "config" / ".env.local"))
-    )).resolve()
+    # Precedence: an explicit argument, then the provider this run selected,
+    # then an operator-level default. A run's chosen provider must not be
+    # silently overridden by an ambient variable.
+    declared_env_file = run.get("provider_env_file")
+    env_file = (
+        gateway_env_file
+        or (Path(str(declared_env_file)) if declared_env_file else None)
+        or Path(
+            os.environ.get(
+                "AI_NATIVE_EVALS_GATEWAY_ENV_FILE", str(repo_root / "config" / ".env.local")
+            )
+        )
+    ).resolve()
 
     if not env_file.is_file():
         raise DockerRuntimeError(
@@ -110,6 +129,9 @@ def start_docker_run(
             "wsl_distro": distro,
             "gateway_image": gateway_image,
             "gateway_env_file": str(env_file),
+            # Which upstream actually served this run. The manifest is the
+            # reproducibility record; a gitignored .env.local is not.
+            "upstream_origin": gateway_upstream_origin(env_file),
             "started_at": _utc_now(),
             "status": "running",
         }
@@ -117,8 +139,18 @@ def start_docker_run(
     return update_manifest(run_dir, status="running", runtime=runtime)
 
 
-def wait_docker_run(run_dir: Path, *, wsl_distro: str | None = None) -> dict[str, Any]:
-    """Wait for the Agent, persist its logs, and release Docker resources."""
+def wait_docker_run(
+    run_dir: Path,
+    *,
+    wsl_distro: str | None = None,
+    timeout_seconds: int | None = None,
+) -> dict[str, Any]:
+    """Wait for the Agent, persist its logs, and release Docker resources.
+
+    The wait is bounded. An Agent that hangs must not hold its container, its run
+    record, or the caller forever; on timeout the containers and network are
+    reclaimed and the run is reported as failed rather than left running.
+    """
     run_dir = run_dir.resolve()
     manifest = load_manifest(run_dir)
     runtime = manifest.get("runtime")
@@ -127,8 +159,22 @@ def wait_docker_run(run_dir: Path, *, wsl_distro: str | None = None) -> dict[str
     distro = wsl_distro or runtime.get(
         "wsl_distro", os.environ.get("AI_NATIVE_EVALS_WSL_DISTRO", _DEFAULT_WSL_DISTRO)
     )
+    run = manifest.get("run")
+    limit = timeout_seconds or _agent_timeout_seconds(run if isinstance(run, dict) else {})
 
-    exit_text = _docker(distro, "wait", str(runtime["agent_container"]))
+    try:
+        exit_text = _docker(
+            distro, "wait", str(runtime["agent_container"]), timeout=limit
+        )
+    except DockerTimeoutError as exc:
+        try:
+            stop_docker_run(run_dir, wsl_distro=str(distro))
+        except (DockerRuntimeError, OSError, ValueError):
+            # Reclaiming what we can beats masking the original timeout.
+            pass
+        raise DockerTimeoutError(
+            f"Agent exceeded its {limit}s time limit and was stopped"
+        ) from exc
     try:
         exit_code = int(exit_text.strip())
     except ValueError as exc:
@@ -388,6 +434,25 @@ def _run_metadata(manifest: dict[str, Any]) -> dict[str, Any]:
     return value
 
 
+def _agent_timeout_seconds(run: dict[str, Any]) -> int:
+    """Resolve the subject Agent time limit from the environment, then the profile."""
+    configured = os.environ.get("AI_NATIVE_EVALS_AGENT_TIMEOUT_SECONDS")
+    if configured:
+        try:
+            value = int(configured)
+        except ValueError:
+            value = 0
+        if value > 0:
+            return value
+    sandbox = _sandbox_metadata(run)
+    value = sandbox.get("agent_timeout_seconds")
+    if isinstance(value, bool):
+        value = None
+    if isinstance(value, (int, float)) and value > 0:
+        return int(value)
+    return _DEFAULT_AGENT_TIMEOUT_SECONDS
+
+
 def _sandbox_metadata(run: dict[str, Any]) -> dict[str, Any]:
     value = run.get("sandbox", {})
     return value if isinstance(value, dict) else {}
@@ -432,6 +497,51 @@ def _safe_name(value: str) -> str:
     return normalized.strip("-")[:50] or "run"
 
 
+def _env_file_value(env_file: Path, *names: str) -> str | None:
+    """Read the first matching KEY=VALUE from a dotenv-style file."""
+    try:
+        raw = env_file.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    wanted = set(names)
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped.startswith("export "):
+            stripped = stripped[len("export "):].lstrip()
+        key, sep, value = stripped.partition("=")
+        if not sep or key.strip() not in wanted:
+            continue
+        value = value.strip().strip("\"'")
+        if value:
+            return value
+    return None
+
+
+def gateway_upstream_origin(env_file: Path) -> str | None:
+    """Return scheme://host of the configured LLM upstream.
+
+    A run must be able to answer "did the upstream change between these two
+    runs?" without recording a credential, so only the origin is kept: never
+    the userinfo, path, query, or the API key.
+    """
+    raw = _env_file_value(env_file, "UPSTREAM_BASE_URL", "AI_NATIVE_EVALS_LLM_BASE_URL")
+    if not raw:
+        return None
+    try:
+        parts = urlsplit(raw if "//" in raw else "//" + raw)
+    except ValueError:
+        return None
+    host = parts.hostname
+    if not host:
+        return None
+    origin = (parts.scheme or "https") + "://" + host
+    if parts.port:
+        origin = origin + ":" + str(parts.port)
+    return origin
+
+
 def _resolve_wsl_host_ip(distro: str) -> str:
     """Resolve the Windows host address reachable from a WSL Docker container."""
     result = subprocess.run(
@@ -457,14 +567,18 @@ def _resolve_wsl_host_ip(distro: str) -> str:
     return "host-gateway"
 
 
-def _docker(distro: str, *args: str) -> str:
-    result = _docker_raw(distro, *args)
+def _docker(
+    distro: str, *args: str, timeout: int | None = _DEFAULT_DOCKER_TIMEOUT_SECONDS
+) -> str:
+    result = _docker_raw(distro, *args, timeout=timeout)
     if result.returncode != 0:
         raise DockerRuntimeError(_command_error(result))
     return _combined_output(result).strip()
 
 
-def _docker_raw(distro: str, *args: str) -> subprocess.CompletedProcess[str]:
+def _docker_raw(
+    distro: str, *args: str, timeout: int | None = _DEFAULT_DOCKER_TIMEOUT_SECONDS
+) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run(
             ["wsl.exe", "-d", distro, "--", "docker", *args],
@@ -473,7 +587,12 @@ def _docker_raw(distro: str, *args: str) -> subprocess.CompletedProcess[str]:
             text=True,
             encoding="utf-8",
             errors="replace",
+            timeout=timeout,
         )
+    except subprocess.TimeoutExpired as exc:
+        raise DockerTimeoutError(
+            f"docker {' '.join(args[:2])} exceeded {timeout}s"
+        ) from exc
     except OSError as exc:
         raise DockerRuntimeError(f"could not invoke WSL Docker: {exc}") from exc
 

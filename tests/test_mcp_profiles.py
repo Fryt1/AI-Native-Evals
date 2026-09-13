@@ -90,6 +90,19 @@ mcp_profiles:
     assert json.loads(mcp_path.read_text(encoding="utf-8")) == {}
 
 
+def _renderer_env(**overrides: str) -> dict[str, str]:
+    """Minimal env for the Node renderer: OS basics plus the values under test."""
+    import os
+
+    env = {
+        key: os.environ[key]
+        for key in ("PATH", "SystemRoot", "COMSPEC", "PATHEXT", "TEMP", "TMP")
+        if key in os.environ
+    }
+    env.update(overrides)
+    return env
+
+
 def test_codex_config_renderer_writes_stdio_and_http_servers(tmp_path: Path) -> None:
     output = tmp_path / "config.toml"
     servers = tmp_path / "servers.json"
@@ -115,13 +128,15 @@ def test_codex_config_renderer_writes_stdio_and_http_servers(tmp_path: Path) -> 
         check=True,
         capture_output=True,
         text=True,
-        env={
-            "PATH": __import__("os").environ["PATH"],
-            "EVAL_MODEL": "deepseek/deepseek-v4-flash",
-            "EVAL_REASONING_EFFORT": "high",
-            "EVAL_GATEWAY_URL": "http://llm-gateway:8080/v1",
-            "EVAL_WIRE_API": "responses",
-        },
+        # A deliberately small environment proves the renderer reads only its
+        # own inputs. Windows still needs the OS variables Node requires to
+        # start at all, so those are carried over explicitly.
+        env=_renderer_env(
+            EVAL_MODEL="deepseek/deepseek-v4-flash",
+            EVAL_REASONING_EFFORT="high",
+            EVAL_GATEWAY_URL="http://llm-gateway:8080/v1",
+            EVAL_WIRE_API="responses",
+        ),
     )
     assert completed.returncode == 0
     rendered = output.read_text(encoding="utf-8")

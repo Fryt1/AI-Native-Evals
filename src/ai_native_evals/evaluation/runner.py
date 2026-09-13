@@ -213,6 +213,23 @@ def _execute_check(context: EvaluationContext, check: CheckSpec) -> CheckResult:
     return result
 
 
+def _effective_status(result: CheckResult, plan: TestPlan) -> str:
+    """Collapse a CheckResult into the verdict it carries for aggregation.
+
+    The distinction that decides a run is *determinate negative* versus
+    *undetermined*. An evaluator that crashed, a dependency that never ran, or a
+    check the task chose to skip tells us nothing about the Agent, so it must not
+    be silently reported as a failed check. ``on_error`` decides how an
+    evaluator-level failure is read; ``skip`` removes it from the verdict
+    entirely.
+    """
+    if result.status == "error":
+        check = next((item for item in plan.checks if item.id == result.check_id), None)
+        policy = check.on_error if check is not None else "fail"
+        return {"fail": "failed", "review": "review", "skip": "skipped"}[policy]
+    return result.status
+
+
 def _aggregate(context: EvaluationContext, checks: list[CheckResult]) -> EvaluationReport:
     """Apply task policy without collapsing diagnostic details."""
     if not checks:
@@ -227,11 +244,13 @@ def _aggregate(context: EvaluationContext, checks: list[CheckResult]) -> Evaluat
             errors=("test plan contains no checks",),
         )
 
-    hard_ids = set(context.plan.hard_checks)
+    plan = context.plan
+    effective = {result.check_id: _effective_status(result, plan) for result in checks}
+    hard_ids = set(plan.hard_checks)
     hard_failures = [
         result
         for result in checks
-        if result.check_id in hard_ids and result.status != "passed"
+        if result.check_id in hard_ids and effective[result.check_id] == "failed"
     ]
     errors = tuple(
         f"{result.check_id}: {result.error}"
@@ -246,21 +265,32 @@ def _aggregate(context: EvaluationContext, checks: list[CheckResult]) -> Evaluat
     process = [
         result for result in checks if result.phase == "process" and result.score is not None
     ]
-    outcome_score = _binary_score(outcome)
-    weights = {check.id: check.weight for check in context.plan.checks}
+    outcome_score = _binary_score(outcome, effective)
+    weights = {check.id: check.weight for check in plan.checks}
     quality_score = _weighted_score(quality, weights)
     process_score = _weighted_score(process, weights)
+
+    determinate = [
+        status for status in effective.values() if status in {"passed", "failed", "observed"}
+    ]
+    # A missing verdict is not a negative verdict. A crashed evaluator, a blocked
+    # dependency, or a plan that skipped every check must never be reported as a
+    # pass; it follows the plan's uncertain_result policy instead.
+    undetermined = (
+        not determinate
+        or any(status in {"review", "blocked", "error"} for status in effective.values())
+    )
 
     if hard_failures:
         decision = "fail"
     elif (
-        context.plan.quality_threshold is not None
+        plan.quality_threshold is not None
         and quality_score is not None
-        and quality_score < context.plan.quality_threshold
+        and quality_score < plan.quality_threshold
     ):
         decision = "fail"
-    elif any(result.status in {"review", "blocked", "error"} for result in checks):
-        decision = "review"
+    elif undetermined:
+        decision = plan.uncertain_result
     else:
         decision = "pass"
 
@@ -663,21 +693,24 @@ def _quality_judge(context: EvaluationContext, check: CheckSpec) -> CheckResult:
         timeout_seconds=check.timeout_seconds or 1200,
         repo_root=context.repo_root,
     )
-    payload = _load_agent_json(result.output_path, result.last_message_path)
     if result.status != "completed":
         return _error_result(
             check,
             started,
             result.failure_message or f"quality Judge exited with {result.exit_code}",
         )
+    payload = _load_agent_json(result.output_path, result.last_message_path)
     score = payload.get("score") if isinstance(payload, dict) else None
     if isinstance(score, bool) or not isinstance(score, (int, float)):
         return _error_result(check, started, "quality Judge did not return numeric score")
     score_float = float(score)
     if not 0.0 <= score_float <= 1.0:
         return _error_result(check, started, "quality Judge score must be between 0 and 1")
-    judge_status = payload.get("status", "pass")
+    judge_status = payload.get("status")
     if judge_status not in {"pass", "fail", "review"}:
+        # The prompt requires an explicit verdict. A missing or unrecognized one
+        # means the Judge did not answer the question, so fail closed into review
+        # rather than letting an absent field read as a pass.
         judge_status = "review"
     return CheckResult(
         check_id=check.id,
@@ -1088,10 +1121,19 @@ def _json_safe(value: Any) -> Any:
     return value
 
 
-def _binary_score(results: list[CheckResult]) -> float | None:
-    if not results:
+def _binary_score(results: list[CheckResult], effective: Mapping[str, str]) -> float | None:
+    """Average the outcome checks that produced a determinate verdict.
+
+    Undetermined checks are excluded rather than scored as zero, so a broken
+    evaluator cannot masquerade as an Agent that scored 0.
+    """
+    values = [
+        1.0 if effective.get(result.check_id) == "passed" else 0.0
+        for result in results
+        if effective.get(result.check_id) in {"passed", "failed"}
+    ]
+    if not values:
         return None
-    values = [1.0 if result.status == "passed" else 0.0 for result in results]
     return round(sum(values) / len(values), 3)
 
 
@@ -1113,13 +1155,21 @@ def _weighted_score(
 
 
 def _error_result(check: CheckSpec, started: str, message: str) -> CheckResult:
+    """Record an evaluator that could not run at all.
+
+    This is the second producer of error results (the first is the exception
+    boundary in ``_execute_check``); it must apply ``on_error`` the same way so
+    the persisted status agrees with the verdict that gets aggregated from it.
+    """
+    status = {"review": "review", "skip": "skipped"}.get(check.on_error, "error")
+    failed = status == "error"
     return CheckResult(
         check_id=check.id,
         phase=check.phase,
         evaluator=check.evaluator,
-        status="error",
-        passed=False,
-        score=0.0 if check.phase == "outcome" else None,
+        status=status,  # type: ignore[arg-type]
+        passed=False if failed else None,
+        score=0.0 if failed and check.phase == "outcome" else None,
         error=message,
         started_at=started,
         finished_at=_utc_now(),

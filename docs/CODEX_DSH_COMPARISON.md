@@ -17,9 +17,12 @@
 
 ## 现场位置
 
+两个 Run 的现场都在本机 `<EvalRuns>/` 下（具体位置见 `config/eval.yaml` 的
+`paths.runs_root`），目录名即 Run ID：
+
 ```text
-D:\work\AI-Native\EvalRuns\structured-report-contract-ff8e08ac2a\
-D:\work\AI-Native\EvalRuns\structured-report-contract-0b8400ec2b\
+<EvalRuns>/structured-report-contract-ff8e08ac2a/
+<EvalRuns>/structured-report-contract-0b8400ec2b/
 ```
 
 每个现场都包含：
@@ -36,7 +39,7 @@ workspace/trace/evaluators/
 
 ## 解释
 
-`dsh-release` 是为了快速验证真实 DSH Docker 链路而使用的发布镜像；严格复现当前 `D:\work\AI-Native\dsh` commit 时，使用：
+`dsh-release` 是为了快速验证真实 DSH Docker 链路而使用的发布镜像；需要严格复现某个 DSH 源码 commit 时，改用源码镜像：
 
 ```powershell
 pwsh -File .\tools\build-sandbox-images.ps1 -IncludeDsh -UseMirror

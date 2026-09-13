@@ -116,6 +116,10 @@ def prepare_run(
     manifest: dict[str, Any] = {
         "status": "prepared",
         "run": run_metadata,
+        # A tag is not an identity: rebuilding keeps the tag and changes the
+        # bytes. Recording the resolved image IDs is what lets a later reader
+        # say which build this run actually used.
+        "images": _image_identities(spec),
         "snapshots": {
             "resources": {key: value.to_dict() for key, value in resource_snapshots.items()},
             # Compatibility projections for the old verifier/report vocabulary.
@@ -132,6 +136,32 @@ def load_manifest(path: Path) -> dict[str, Any]:
     """Load a run manifest from a directory or manifest path."""
     manifest_path = path / "run-manifest.json" if path.is_dir() else path
     return json.loads(manifest_path.read_text(encoding="utf-8"))
+
+
+def _image_identities(spec: RunSpec) -> dict[str, Any]:
+    """Resolve the images this run starts to their immutable IDs.
+
+    Best effort by design: preparing a run must not fail because Docker is
+    absent, and an unknown ID is recorded as such rather than as ``None`` so a
+    reader can tell "not checked" from "no image".
+    """
+    from .images import image_paths, inspect_image
+
+    entries: dict[str, Any] = {}
+    for role, reference in image_paths(spec):
+        status = inspect_image(reference)
+        entry: dict[str, Any] = {"reference": reference}
+        if status.present is True:
+            entry["id"] = status.image_id
+            entry["present"] = True
+        elif status.present is False:
+            entry["present"] = False
+            entry["error"] = status.error
+        else:
+            entry["present"] = None
+            entry["error"] = status.error
+        entries[role] = entry
+    return entries
 
 
 def set_status(run_dir: Path, status: str) -> dict[str, Any]:
