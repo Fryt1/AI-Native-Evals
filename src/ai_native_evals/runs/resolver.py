@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import os
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
@@ -13,6 +14,19 @@ import yaml
 
 from ..agents import AgentProfile
 from ..plans import TestPlan
+from ..providers import (
+    ProviderError,
+    agent_reasoning_levels,
+    agent_wire_apis,
+    allowed_reasoning_levels,
+    fallback_reasoning_levels,
+    load_provider_profiles,
+    normalize_level,
+    provider_env_file,
+    read_provider_env,
+    resolve_wire_api,
+    validate_model_available,
+)
 from ..tasks.bundles import TaskBundleError, load_task_bundle
 from .spec import RunSpec
 
@@ -21,14 +35,49 @@ class EvalConfigError(ValueError):
     """Raised when eval.yaml or a referenced profile cannot produce a valid run."""
 
 
+def _local_override_path(config_path: Path) -> Path:
+    """The machine-local overlay for a tracked config (``eval.yaml`` -> ``eval.local.yaml``)."""
+    return config_path.with_name(f"{config_path.stem}.local{config_path.suffix}")
+
+
+def _merge_config(base: Mapping[str, Any], override: Mapping[str, Any]) -> dict[str, Any]:
+    """Deep-merge ``override`` onto ``base``; mappings merge, everything else replaces."""
+    merged = dict(base)
+    for key, value in override.items():
+        existing = merged.get(key)
+        if isinstance(existing, Mapping) and isinstance(value, Mapping):
+            merged[key] = _merge_config(existing, value)
+        else:
+            merged[key] = value
+    return merged
+
+
 def load_config(path: Path) -> dict[str, Any]:
-    """Load an evaluation YAML config."""
+    """Load an evaluation YAML config, then apply its machine-local overlay.
+
+    The tracked ``config/eval.yaml`` describes the framework and holds no
+    machine-specific path. Anything that differs per machine -- where the
+    evaluated repositories and the runs directory live -- belongs in the
+    gitignored ``config/eval.local.yaml``, which overrides the tracked file
+    key by key. This keeps the repository shareable while still letting one
+    checkout point at whatever local layout it has.
+    """
     try:
         value = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     except (OSError, yaml.YAMLError) as exc:
         raise EvalConfigError(f"could not read config {path}: {exc}") from exc
     if not isinstance(value, dict):
         raise EvalConfigError("evaluation config must be a YAML object")
+
+    local_path = _local_override_path(path)
+    if local_path.is_file():
+        try:
+            raw_local = yaml.safe_load(local_path.read_text(encoding="utf-8")) or {}
+        except (OSError, yaml.YAMLError) as exc:
+            raise EvalConfigError(f"could not read local config {local_path}: {exc}") from exc
+        if not isinstance(raw_local, dict):
+            raise EvalConfigError(f"{local_path.name} must be a YAML object")
+        value = _merge_config(value, raw_local)
     return value
 
 
@@ -39,13 +88,25 @@ def resolve_run(
     config_path: Path | None = None,
     agent: str | None = None,
     model_profile: str | None = None,
+    model_provider: str | None = None,
+    model: str | None = None,
+    provider: str | None = None,
+    reasoning_effort: str | None = None,
     game_engine_ref: str | None = None,
     dsh_ref: str | None = None,
     mcp_profile: str | None = None,
     sandbox_profile: str | None = None,
     preset: str | None = None,
+    check_images: bool = False,
 ) -> RunSpec:
-    """Resolve defaults and command-line overrides into one RunSpec."""
+    """Resolve defaults and command-line overrides into one RunSpec.
+
+    ``check_images`` asks Docker whether every image the run will start actually
+    exists. It stays off by default so resolution remains usable on a machine
+    without Docker (and in tests); callers that are about to launch a run turn
+    it on, because a missing image is otherwise discovered only after the run
+    has already been recorded as started.
+    """
     config_path = config_path or repo_root / "config" / "eval.yaml"
     config = load_config(config_path)
     defaults = _mapping(config, "defaults")
@@ -89,6 +150,11 @@ def resolve_run(
     )
 
     try:
+        provider_profiles = load_provider_profiles(repo_root, config)
+    except ProviderError as exc:
+        raise EvalConfigError(str(exc)) from exc
+
+    try:
         task_bundle = load_task_bundle(repo_root, task_id, config=config)
     except TaskBundleError as exc:
         raise EvalConfigError(str(exc)) from exc
@@ -100,6 +166,13 @@ def resolve_run(
         if not preset_config:
             raise EvalConfigError(f"unknown run preset: {preset_name}")
 
+    # `model_provider` historically named the agent-side route. When it names a
+    # configured provider profile, treat it as the upstream selection so both
+    # spellings of "pick a provider" reach the same code path.
+    if provider is None and model_provider is not None and model_provider in provider_profiles:
+        provider = model_provider
+        model_provider = None
+
     agent_name = _select_name(
         agent,
         "agent",
@@ -109,6 +182,54 @@ def resolve_run(
         "codex",
         preset_name is not None,
     )
+    # The project-level provider default is a starting point for the
+    # model-picking flow, not an override. An explicit binding, or a
+    # `model_provider` naming something that is not a provider profile, already
+    # states the whole route and must not be hijacked by that default.
+    legacy_route = model_profile is not None or (
+        model_provider is not None and model_provider not in provider_profiles
+    )
+    provider_name = (
+        ""
+        if provider is None and legacy_route
+        else _select_name(
+            provider,
+            "provider",
+            task_execution,
+            defaults,
+            preset_config,
+            "",
+            preset_name is not None,
+        )
+    )
+    provider_config: dict[str, Any] = {}
+    if provider_name:
+        provider_config = provider_profiles.get(provider_name, {})
+        if not provider_config:
+            raise EvalConfigError(
+                f"unknown provider {provider_name!r}; configured providers: "
+                + (", ".join(sorted(provider_profiles)) or "none")
+            )
+        env_path = provider_env_file(repo_root, provider_config)
+        if env_path is None or not env_path.is_file():
+            raise EvalConfigError(
+                f"provider {provider_name!r} is not configured; create {env_path} "
+                "with UPSTREAM_BASE_URL and UPSTREAM_API_KEY"
+            )
+    selected_model = (
+        _select_name(
+            model,
+            "model",
+            task_execution,
+            defaults,
+            preset_config,
+            "",
+            preset_name is not None,
+        )
+        if provider_name
+        else ""
+    )
+
     profile_name = _select_name(
         model_profile,
         "model_profile",
@@ -118,6 +239,21 @@ def resolve_run(
         "default",
         preset_name is not None,
     )
+    if provider_name:
+        # A provider selection owns the route. A binding is optional: it only
+        # overrides protocol/reasoning defaults when it names the same pair.
+        # The model requirement is enforced once the Agent is known to exist,
+        # so a bad Agent is reported as such rather than as a missing model.
+        profile_name = (
+            _matching_binding(model_profiles, provider_name, selected_model)
+            or f"{provider_name}:{selected_model}"
+        )
+    elif model_profile is None and (model_provider is not None or model is not None):
+        profile_name = _find_model_profile(
+            model_profiles,
+            provider=model_provider,
+            model=model,
+        )
     mcp_name = _select_name(
         mcp_profile,
         "mcp_profile",
@@ -161,8 +297,21 @@ def resolve_run(
         sandbox_config = _mapping(config, "sandbox")
     if not evaluator_agent_config:
         raise EvalConfigError(f"unknown evaluator agent profile: {evaluator_agent_name}")
-    if not model_config:
+    if not model_config and not provider_name:
         raise EvalConfigError(f"unknown model profile: {profile_name}")
+    profile_provider = _optional_string(model_config, "provider")
+    profile_model = _optional_string(model_config, "model")
+    if not provider_name:
+        if model_provider is not None and model_provider != profile_provider:
+            raise EvalConfigError(
+                f"model provider {model_provider!r} does not match profile "
+                f"{profile_name!r} provider {profile_provider!r}"
+            )
+        if model is not None and model != profile_model:
+            raise EvalConfigError(
+                f"model {model!r} does not match profile "
+                f"{profile_name!r} model {profile_model!r}"
+            )
     if not mcp_config:
         raise EvalConfigError(f"unknown MCP profile: {mcp_name}")
     if "adapter" not in agent_config:
@@ -202,26 +351,87 @@ def resolve_run(
     runs_root = _resolve_path(repo_root, paths, "runs_root")
     run_id = f"{task_id}-{uuid4().hex[:10]}"
     protocol = _string(model_config, "protocol", agent_profile.protocol)
-    model = _string(model_config, "model", "")
-    return RunSpec(
+    resolved_model = model or _string(model_config, "model", "")
+    resolved_provider = model_provider or profile_provider
+    resolved_env_file: str | None = None
+    resolved_reasoning = _optional_string(
+        model_config,
+        "reasoning_effort",
+        _optional_string(agent_config, "reasoning_effort"),
+    )
+    if provider_name:
+        if not selected_model:
+            raise EvalConfigError(
+                f"provider {provider_name!r} needs a model; "
+                "list them with the provider's /v1/models endpoint"
+            )
+        env_path = provider_env_file(repo_root, provider_config)
+        if env_path is not None:
+            missing = validate_model_available(
+                provider_config, read_provider_env(env_path), selected_model
+            )
+            if missing:
+                raise EvalConfigError(missing)
+        negotiated = resolve_wire_api(provider_config, agent_name, agent_profile.adapter)
+        if negotiated is None:
+            raise EvalConfigError(
+                f"provider {provider_name!r} speaks "
+                + ", ".join(_as_list(provider_config.get("wire_api")))
+                + f" but agent {agent_name!r} speaks "
+                + ", ".join(_as_list(agent_wire_apis(agent_name, agent_profile.adapter)))
+                + "; no protocol is shared"
+            )
+        protocol = _string(model_config, "protocol", negotiated)
+        resolved_model = selected_model
+        resolved_provider = None
+        env_path = provider_env_file(repo_root, provider_config)
+        resolved_env_file = str(env_path) if env_path else None
+        agent_levels = agent_reasoning_levels(agent_name, agent_profile.adapter)
+        allowed = allowed_reasoning_levels(
+            fallback_reasoning_levels(provider_config), agent_levels
+        )
+        requested = (
+            _select_name(
+                reasoning_effort,
+                "reasoning_effort",
+                task_execution,
+                defaults,
+                preset_config,
+                "",
+                preset_name is not None,
+            )
+            or _optional_string(model_config, "reasoning_effort")
+            or _optional_string(provider_config, "default_reasoning")
+            or ""
+        )
+        # Accept a level the other side spells differently (`none` vs `off`)
+        # but store it the way this Agent names it, since the value is written
+        # into that Agent's own configuration.
+        matched = None
+        if requested:
+            wanted = normalize_level(requested)
+            matched = next(
+                (level for level in allowed if normalize_level(level) == wanted), None
+            )
+        if requested and allowed and matched is None:
+            raise EvalConfigError(
+                f"reasoning effort {requested!r} is not available for provider "
+                f"{provider_name!r} with agent {agent_name!r}; choose one of: "
+                + ", ".join(allowed)
+            )
+        resolved_reasoning = matched or requested or None
+    spec = RunSpec(
         run_id=run_id,
         task_id=task_id,
         task_prompt=task_bundle.prompt,
         agent=agent_name,
         agent_image=agent_profile.image,
         model_profile=profile_name,
-        model=model,
-        model_provider=_optional_string(
-            model_config,
-            "provider",
-            "eval" if agent_profile.adapter == "dsh-acp" else None,
-        ),
+        model=resolved_model,
+        model_provider=resolved_provider
+        or ("eval" if agent_profile.adapter == "dsh-acp" else None),
         protocol=protocol,
-        reasoning_effort=_optional_string(
-            model_config,
-            "reasoning_effort",
-            _optional_string(agent_config, "reasoning_effort"),
-        ),
+        reasoning_effort=resolved_reasoning,
         mcp_profile=mcp_name,
         mcp_host=_string(mcp_config, "host", "host.docker.internal"),
         mcp_port=_integer(mcp_config, "port", 9876),
@@ -243,7 +453,85 @@ def resolve_run(
         resource_specs=resource_specs,
         task_bundle=task_bundle.to_dict(),
         preset=preset_name,
+        provider=provider_name or None,
+        provider_env_file=resolved_env_file,
     )
+    if check_images:
+        _require_run_images(spec)
+    return spec
+
+
+def _require_run_images(spec: RunSpec) -> None:
+    """Fail resolution when an image this run needs was never built.
+
+    Only a definite absence fails. A machine where Docker cannot be asked
+    resolves normally, because "I could not check" is not evidence that
+    something is missing.
+    """
+    from .images import image_paths, missing_images
+
+    absent = missing_images(image_paths(spec))
+    if not absent:
+        return
+    detail = "; ".join(
+        f"{status.reference} ({status.error})" if status.error else status.reference
+        for status in absent
+    )
+    raise EvalConfigError(
+        "the following Docker images do not exist on this machine: "
+        + detail
+        + ". Build them with: pwsh -File tools/build-sandbox-images.ps1"
+    )
+
+
+def _as_list(value: Any) -> list[str]:
+    """Render a scalar-or-list profile field as a list of strings."""
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    if value is None:
+        return []
+    return [str(value)]
+
+
+def _matching_binding(
+    profiles: Mapping[str, Any],
+    provider: str,
+    model: str,
+) -> str | None:
+    """Return the binding naming this exact provider/model pair, if one exists."""
+    for profile_id, value in profiles.items():
+        if not isinstance(value, Mapping):
+            continue
+        if str(value.get("provider")) != provider or str(value.get("model")) != model:
+            continue
+        return str(profile_id)
+    return None
+
+
+def _find_model_profile(
+    profiles: Mapping[str, Any],
+    *,
+    provider: str | None,
+    model: str | None,
+) -> str:
+    """Find the configured binding for an independent Provider/Model selection."""
+    matches = []
+    for profile_id, value in profiles.items():
+        if not isinstance(value, Mapping):
+            continue
+        if provider is not None and str(value.get("provider")) != provider:
+            continue
+        if model is not None and str(value.get("model")) != model:
+            continue
+        matches.append(str(profile_id))
+    if not matches:
+        raise EvalConfigError(f"no model profile matches provider={provider!r}, model={model!r}")
+    if len(matches) > 1:
+        raise EvalConfigError(
+            "model selection is ambiguous; choose a model profile binding from: "
+            + ", ".join(sorted(matches))
+        )
+    return matches[0]
 
 
 def _select_name(
@@ -302,14 +590,55 @@ def _merge_named_profile_source(
 
 
 def _source_roots(paths: Mapping[str, Any]) -> dict[str, Any]:
+    """Resolve resource id -> location, letting the environment win.
+
+    Precedence is environment over config, so a CI job can point ids at a Git
+    URL without editing any file:
+
+        AI_NATIVE_EVALS_SOURCE_<ID>       -> the location
+        AI_NATIVE_EVALS_SOURCE_REF_<ID>   -> an optional default ref
+
+    The tracked config ships with no ids at all; a machine supplies them in
+    ``config/eval.local.yaml``.
+    """
     raw = paths.get("source_roots")
     if isinstance(raw, Mapping):
-        return dict(raw)
-    return {
-        key: value
-        for key, value in paths.items()
-        if key not in {"runs_root", "source_roots"} and isinstance(value, str)
-    }
+        roots: dict[str, Any] = {k: v for k, v in raw.items() if v is not None}
+    else:
+        roots = {
+            key: value
+            for key, value in paths.items()
+            if key not in {"runs_root", "source_roots"} and isinstance(value, str)
+        }
+    return _apply_source_env(roots)
+
+
+def _apply_source_env(roots: dict[str, Any]) -> dict[str, Any]:
+    """Overlay ``AI_NATIVE_EVALS_SOURCE_*`` variables onto configured roots."""
+    prefix = "AI_NATIVE_EVALS_SOURCE_"
+    ref_prefix = f"{prefix}REF_"
+    resolved = dict(roots)
+    for name, value in os.environ.items():
+        if not name.startswith(prefix) or name.startswith(ref_prefix):
+            continue
+        if not value.strip():
+            continue
+        source_id = name[len(prefix) :].lower()
+        existing = resolved.get(source_id)
+        ref = os.environ.get(f"{ref_prefix}{name[len(prefix):]}")
+        if isinstance(existing, Mapping):
+            merged = dict(existing)
+            merged["url"] = value.strip()
+            if ref and ref.strip():
+                merged["ref"] = ref.strip()
+            resolved[source_id] = merged
+        else:
+            resolved[source_id] = (
+                {"url": value.strip(), "ref": ref.strip()}
+                if ref and ref.strip()
+                else value.strip()
+            )
+    return resolved
 
 
 def _resource_source(specs: tuple[Any, ...], resource_id: str) -> Path | None:

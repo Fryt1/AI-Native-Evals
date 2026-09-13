@@ -1,0 +1,36 @@
+# Machine-local overrides for config/eval.yaml.
+#
+# Copy this file to `config/eval.local.yaml` and fill in where things live on
+# THIS machine. That file is gitignored and is never shared, so paths here may
+# be absolute and may point anywhere.
+#
+# The tracked eval.yaml stays machine-independent; anything you set here wins,
+# key by key, over the tracked value.
+
+paths:
+  # Resource source ids referenced by a Task's `resources[].source`.
+  # Add one entry per repository this machine evaluates; the framework itself
+  # neither knows nor cares how many there are or where they sit.
+
+  # A local checkout (fastest; no network):
+  #   my_project: ../my-project
+
+  # A Git remote (lets another machine or a CI job run the same Task). The first
+  # run clones it into cache/repos/; later runs reuse that checkout. Pass
+  # --refresh-sources to move it forward.
+  #   shared_project: https://github.com/org/repo.git
+
+  # A remote with a default ref, so Tasks need not repeat it:
+  #   pinned_project:
+  #     url: https://github.com/org/repo.git
+  #     ref: v1.2.0
+  source_roots: {}
+
+  # Where run workspaces are written. Usually outside the repository.
+  runs_root: ../EvalRuns
+
+# On CI, no file needs editing at all: the environment wins over this file.
+#
+#   AI_NATIVE_EVALS_SOURCE_<ID>=https://github.com/org/repo.git
+#   AI_NATIVE_EVALS_SOURCE_REF_<ID>=v1.2.0        # optional
+

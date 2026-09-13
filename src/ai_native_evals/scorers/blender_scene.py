@@ -15,8 +15,15 @@ from ..adapters.events import compact_value
 
 
 def _find_blender() -> str:
-    configured = os.environ.get("BLENDER_EXECUTABLE", r"E:\blender\blender.exe")
-    if Path(configured).is_file():
+    """Locate the Blender executable.
+
+    ``BLENDER_EXECUTABLE`` is the only supported configuration: a hard-coded
+    install path would bake one machine's layout into the framework and silently
+    produce a wrong result on any other. Falling back to ``blender`` on PATH
+    keeps the common case working without naming a directory.
+    """
+    configured = os.environ.get("BLENDER_EXECUTABLE", "").strip()
+    if configured and Path(configured).is_file():
         return str(Path(configured))
     return "blender"
 

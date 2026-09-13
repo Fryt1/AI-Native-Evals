@@ -1,4 +1,9 @@
 # AI-Native-Evals global registry. Task-owned definitions live under tasks.
+#
+# This file is tracked and therefore machine-independent: it names no host path.
+# Where the evaluated repositories and the runs directory actually live is a
+# local deployment detail and belongs in the gitignored `config/eval.local.yaml`,
+# which overrides these keys. See config/eval.local.example.yaml.
 version: 1
 task_roots:
 - tasks
@@ -9,15 +14,20 @@ profile_roots:
   sandboxes: profiles/sandboxes
   presets: config/presets
 paths:
-  source_roots:
-    game_engine: ../game-engine
-    dsh: ../AI-Native-DSH
-    dsh_runtime: ../dsh
+  # Resource source ids -> repository locations. Populate per machine in
+  # config/eval.local.yaml; a Task references the id, never the path.
+  source_roots: {}
   runs_root: ../EvalRuns
 defaults:
   agent: codex
   evaluator_agent: codex
-  model_profile: sub2api-deepseek
+  # Which upstream a run talks to, and which model it opens on. The provider and
+  # model here preselect the Console's form: without them the operator faces an
+  # empty model field and learns it was required only when the run is refused.
+  # A run may still choose any model the provider serves.
+  provider: sub2api
+  model: gpt-5.6-luna
+  reasoning_effort: high
   mcp_profile: none
   snapshot_mode: working_tree
   sandbox_profile: docker-default

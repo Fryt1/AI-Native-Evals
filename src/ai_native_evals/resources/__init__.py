@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import re
 import shutil
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -211,6 +213,7 @@ def _resolve_source(
     *,
     repo_root: Path,
     source_roots: Mapping[str, Any],
+    refresh_remotes: bool = False,
 ) -> Path | None:
     if raw_source is None:
         return None
@@ -221,12 +224,91 @@ def _resolve_source(
         value = value[len("${paths.") : -1]
     if value.startswith("paths."):
         value = value.removeprefix("paths.")
+
+    ref: str | None = None
     if value in source_roots:
-        value = str(source_roots[value])
+        mapped = source_roots[value]
+        if isinstance(mapped, Mapping):
+            # An id may carry its own default ref, so a Task does not have to
+            # repeat it: {url: ..., ref: v1.2.0}
+            ref = _optional_str(mapped.get("ref"))
+            url_value = mapped.get("url") or mapped.get("path")
+            value = str(url_value).strip() if url_value is not None else ""
+        else:
+            value = str(mapped).strip()
+    elif _looks_like_source_id(value) and value not in source_roots:
+        # A bare name that maps to nothing would otherwise be read as a relative
+        # directory and resolved to a path that silently does not exist. The
+        # tracked config ships with `source_roots: {}`, so this is the first
+        # thing a fresh clone hits -- say what to do rather than reporting a
+        # missing directory somewhere unrelated.
+        configured = ", ".join(sorted(source_roots)) or "none"
+        raise ResourceError(
+            f"resource source {value!r} is not configured on this machine; "
+            f"add it under paths.source_roots in config/eval.local.yaml "
+            f"(configured: {configured})"
+        )
+
+    if _is_remote_source(value):
+        # A remote id is materialised into the local checkout cache and then
+        # treated exactly like a local path, so no caller downstream has to
+        # know where the code came from.
+        from ..runs.remotes import resolve_remote
+
+        checkout = resolve_remote(
+            value,
+            repo_root=repo_root,
+            ref=ref,
+            refresh=refresh_remotes or _refresh_requested(),
+        )
+        return checkout.path
+
     path = Path(value)
     if not path.is_absolute():
         path = repo_root / path
     return path.resolve()
+
+
+def _optional_str(value: Any) -> str | None:
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _is_remote_source(value: str) -> bool:
+    """Whether a source string names a Git remote.
+
+    Imported lazily: ``runs`` imports this module, so a module-level import of
+    ``runs.remotes`` here would close a cycle.
+    """
+    from ..runs.remotes import looks_like_remote
+
+    return looks_like_remote(value)
+
+
+def _refresh_requested() -> bool:
+    """Whether this process was asked to move remote checkouts forward.
+
+    Read from the environment rather than threaded through every signature:
+    resolution is called from the CLI, the Console, preflight and the compare
+    path, and a single flag is the whole contract.
+    """
+    value = os.environ.get("AI_NATIVE_EVALS_REFRESH_SOURCES", "").strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
+def _looks_like_source_id(value: str) -> bool:
+    """Whether a source string names a configured id rather than a path.
+
+    Ids are single bare identifiers (`my_project`); paths carry a separator, a
+    drive letter, or a dot-prefixed segment. Only the former can be mistaken for
+    an unconfigured id.
+    """
+    if not value or value in {".", ".."}:
+        return False
+    if any(separator in value for separator in ("/", "\\")):
+        return False
+    if ":" in value or value.startswith("."):
+        return False
+    return bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", value))
 
 
 def _required_string(value: Mapping[str, Any], key: str, context: str) -> str:

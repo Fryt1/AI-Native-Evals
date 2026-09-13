@@ -1,35 +1,90 @@
+# =============================================================================
+# AI-Native-Evals
+#
+# Rule of thumb: anything generated, downloaded, or machine-specific stays out
+# of Git. Large binaries must NEVER be committed -- the offline dependency cache
+# keeps only its small, hash-checked metadata in the repository
+# (see docs/OFFLINE_SANDBOX_CACHE.md).
+#
+# Leading "/" anchors a pattern to the repository root on purpose: an unanchored
+# "runs/" would also swallow the source package src/ai_native_evals/runs/.
+#
+# Verify with: pwsh -File tools/check-git-hygiene.ps1
+# =============================================================================
+
+# --- Python ------------------------------------------------------------------
 .venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
 .ruff_cache/
-.inspect/
-logs/
-runs/
-reports/*.json
-reports/*.jsonl
-!reports/.gitkeep
+.mypy_cache/
+.coverage
+htmlcov/
+# Output of `uv build`.
+dist/
+
+# --- Node / Console frontend -------------------------------------------------
+node_modules/
+*.tsbuildinfo
+apps/**/dist/
+
+# --- Secrets and machine-local configuration ---------------------------------
 .env
 .env.*
 !.env.example
 .env.local
 config/.env.local
+config/providers/*.env
+# Machine-local path overrides for config/eval.yaml. The tracked eval.yaml stays
+# machine-independent; these files carry this machine's repository locations.
+config/eval.local.yaml
+config/eval.local.yml
 
-# Source package name is runs; do not confuse it with runtime output directories.
-!src/ai_native_evals/runs/
-!src/ai_native_evals/runs/**
-src/ai_native_evals/runs/**/__pycache__/
-src/ai_native_evals/runs/**/__pycache__/**
-# Local dependency caches stay on disk for offline builds but are not committed.
-# Keep only the small reproducibility metadata and lock files in Git.
+# --- Per-run output ----------------------------------------------------------
+# Inspect transcripts, run workspaces, and the rebuildable Console index.
+/logs/
+/runs/
+*.pid
+reports/*.json
+reports/*.jsonl
+!reports/.gitkeep
+EvalRuns/.console/
+
+# --- Generated copy of the built Console -------------------------------------
+# Written by apps/eval-console/scripts/sync-static.mjs.
+src/ai_native_evals_console/static/
+
+# --- Offline dependency cache ------------------------------------------------
+# Everything below is large and machine-specific. Only the small files that pin
+# exactly what the cache should contain are committed:
+#
+#   cache/docker/sandbox-images.tar   ~2.7 GB Docker image archive   IGNORED
+#   cache/codex/*.tgz                 agent tarballs                 IGNORED
+#   cache/python/*/wheels/*.whl       wheelhouse                     IGNORED
+#
+# Do not add un-ignore rules for these. A single accidental commit of the image
+# archive would permanently bloat the repository history.
 cache/*
+cache/docker/
+# Codex tarballs: keep only the version pin.
 !cache/codex/
 cache/codex/*
 !cache/codex/VERSION
+# Wheelhouses: keep only the requirement locks and the directory marker.
 !cache/python/
 !cache/python/*/
 cache/python/*/wheels/*
 !cache/python/*/wheels/
 !cache/python/*/wheels/.gitkeep
 !cache/python/*/requirements.lock
+# The hash-checked manifest describing every cached artifact.
 !cache/manifest.json
+
+# --- Tool scratch ------------------------------------------------------------
+.playwright-mcp/
+
+# --- OS / editor noise -------------------------------------------------------
+.DS_Store
+Thumbs.db
+Desktop.ini
