@@ -481,6 +481,7 @@ def registry(repo_root: Path) -> dict[str, Any]:
             data = value if isinstance(value, Mapping) else {}
             test_plan = data.get("test_plan") if isinstance(data.get("test_plan"), Mapping) else {}
             checks = test_plan.get("checks") if isinstance(test_plan.get("checks"), list) else []
+            execution = data.get("execution") if isinstance(data.get("execution"), Mapping) else {}
             tasks.append(
                 {
                     "id": str(data.get("id") or directory.name),
@@ -488,6 +489,16 @@ def registry(repo_root: Path) -> dict[str, Any]:
                     "path": str(task_file.relative_to(repo_root)).replace("\\", "/"),
                     "summary": str(data.get("description") or "Task Bundle"),
                     "checks": len(checks),
+                    # What the Task says it needs to run. A Task that drives
+                    # Blender declares `mcp_profile: blender-host`; without this
+                    # the Console could only preselect the global default, which
+                    # silently overrode the Task's own requirement and started
+                    # the run with no MCP tools at all.
+                    "execution": {
+                        str(key): str(item)
+                        for key, item in execution.items()
+                        if isinstance(item, str) and item
+                    },
                 }
             )
     from .paths import load_eval_config

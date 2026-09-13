@@ -77,12 +77,18 @@ export function initialForm(
 ): LaunchDefaults {
   const defaults = (registry?.defaults || {}) as Record<string, string>;
   const tasks = (registry?.tasks || []).map((entry) => entry.id);
+  const taskId = chooseOne(tasks, defaults.task_id);
+  // A Task's own execution block outranks the global default. A Task that
+  // drives Blender declares `mcp_profile: blender-host`; letting `defaults`
+  // win preselected `none` and started the run with no MCP tools, which the
+  // Agent experienced as "the tools I was told to use are not here".
+  const declared = taskExecution(registry, taskId);
 
   const provider = chooseProvider(providers, defaults.model_provider || defaults.provider);
   return {
     // A single Task is preselected: the choice is not a decision when there is
     // only one answer.
-    task_id: chooseOne(tasks, defaults.task_id),
+    task_id: taskId,
     provider,
     // A configured model applies when it belongs to the provider that was
     // chosen. `model_provider` is the legacy spelling of that pairing; a config
@@ -90,17 +96,27 @@ export function initialForm(
     model: chooseModel(models, preferredModelFor(defaults, provider)),
     agent: chooseOne(
       (registry?.agents || []).map((entry) => entry.id),
-      defaults.agent,
+      declared.agent || defaults.agent,
     ),
     mcp_profile: chooseOne(
       (registry?.mcp || []).map((entry) => entry.id),
-      defaults.mcp_profile,
+      declared.mcp_profile || defaults.mcp_profile,
     ),
     sandbox_profile: chooseOne(
       (registry?.sandboxes || []).map((entry) => entry.id),
-      defaults.sandbox_profile,
+      declared.sandbox_profile || defaults.sandbox_profile,
     ),
   };
+}
+
+/** What a Task declares it needs, if the registry reports it. */
+export function taskExecution(
+  registry: Registry | null,
+  taskId: string,
+): Record<string, string> {
+  const entry = (registry?.tasks || []).find((item) => item.id === taskId);
+  const execution = entry?.execution;
+  return execution && typeof execution === "object" ? execution : {};
 }
 
 /**

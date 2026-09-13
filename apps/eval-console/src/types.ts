@@ -288,7 +288,7 @@ export async function awaitPreflight(
   return run;
 }
 
-export type RegistryEntry = { id: string; kind: string; path: string; label?: string; summary?: string; fields?: string[]; checks?: number; provider_id?: string; model_id?: string; capabilities?: string[]; workdir?: string; model_ids?: string[]; model_profiles?: string[] };
+export type RegistryEntry = { id: string; kind: string; path: string; label?: string; summary?: string; fields?: string[]; checks?: number; provider_id?: string; model_id?: string; capabilities?: string[]; workdir?: string; model_ids?: string[]; model_profiles?: string[]; execution?: Record<string, string> };
 export type RegistryKey = "tasks" | "agents" | "providers" | "models" | "mcp" | "sandboxes" | "presets";
 export type Registry = Record<RegistryKey, RegistryEntry[]> & { defaults?: Record<string, string> };
 

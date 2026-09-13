@@ -8,7 +8,7 @@
  * rather than guessed.
  */
 import { describe, expect, it } from "vitest";
-import { agentModels, chooseModel, chooseOne, chooseProvider, chooseReasoning, initialForm, isMeaningfulChoice, nonAgentModels, preferredModelFor, usableProviders } from "./launchDefaults";
+import { agentModels, chooseModel, chooseOne, chooseProvider, chooseReasoning, initialForm, isMeaningfulChoice, nonAgentModels, preferredModelFor, taskExecution, usableProviders } from "./launchDefaults";
 import type { ProviderSummary, Registry } from "./types";
 
 function provider(id: string, configured: boolean, defaultReasoning = "high"): ProviderSummary {
@@ -251,6 +251,82 @@ describe("initialForm", () => {
 
     expect(form.model).toBe("gpt-5.6-luna");
     expect(form.provider).toBe("sub2api");
+  });
+});
+
+/** A Task's declared requirements outrank the global defaults. */
+describe("taskExecution", () => {
+  const withTasks = {
+    tasks: [
+      { id: "blender-task", kind: "task", path: "t", execution: { agent: "codex-blender", mcp_profile: "blender-host" } },
+      { id: "plain-task", kind: "task", path: "t" },
+    ],
+  } as unknown as Registry;
+
+  it("returns what the named Task declares", () => {
+    expect(taskExecution(withTasks, "blender-task")).toEqual({
+      agent: "codex-blender",
+      mcp_profile: "blender-host",
+    });
+  });
+
+  it("returns nothing for a Task that declares nothing", () => {
+    expect(taskExecution(withTasks, "plain-task")).toEqual({});
+  });
+
+  it("returns nothing for an unknown Task rather than throwing", () => {
+    expect(taskExecution(withTasks, "missing")).toEqual({});
+    expect(taskExecution(null, "any")).toEqual({});
+  });
+});
+
+describe("a Task's own execution beats the global default", () => {
+  it("preselects the MCP profile the Task declares", () => {
+    // The global default is `none`. Letting it win started a Blender run with
+    // no MCP tools at all, which the Agent experienced as "the tools I was told
+    // to use are not here".
+    const registry = {
+      tasks: [
+        { id: "blender-task", kind: "task", path: "t", execution: { mcp_profile: "blender-host", agent: "codex-blender" } },
+      ],
+      agents: [{ id: "codex", kind: "agent", path: "p" }, { id: "codex-blender", kind: "agent", path: "p" }],
+      mcp: [{ id: "none", kind: "mcp", path: "p" }, { id: "blender-host", kind: "mcp", path: "p" }],
+      sandboxes: [{ id: "docker-default", kind: "sandbox", path: "p" }],
+      defaults: { task_id: "blender-task", agent: "codex", mcp_profile: "none", sandbox_profile: "docker-default" },
+    } as unknown as Registry;
+
+    const form = initialForm(registry, [provider("sub2api", true)], ["m"]);
+
+    expect(form.mcp_profile).toBe("blender-host");
+    expect(form.agent).toBe("codex-blender");
+  });
+
+  it("still uses the global default when the Task declares nothing", () => {
+    const registry = {
+      tasks: [{ id: "plain", kind: "task", path: "t" }],
+      agents: [{ id: "codex", kind: "agent", path: "p" }],
+      mcp: [{ id: "none", kind: "mcp", path: "p" }, { id: "blender-host", kind: "mcp", path: "p" }],
+      sandboxes: [{ id: "docker-default", kind: "sandbox", path: "p" }],
+      defaults: { task_id: "plain", agent: "codex", mcp_profile: "none" },
+    } as unknown as Registry;
+
+    const form = initialForm(registry, [provider("sub2api", true)], ["m"]);
+
+    expect(form.mcp_profile).toBe("none");
+  });
+
+  it("ignores a Task profile that is not a registered option", () => {
+    const registry = {
+      tasks: [{ id: "t", kind: "task", path: "p", execution: { mcp_profile: "deleted-profile" } }],
+      agents: [{ id: "codex", kind: "agent", path: "p" }],
+      mcp: [{ id: "none", kind: "mcp", path: "p" }],
+      sandboxes: [{ id: "docker-default", kind: "sandbox", path: "p" }],
+      defaults: { task_id: "t", mcp_profile: "none" },
+    } as unknown as Registry;
+
+    const form = initialForm(registry, [provider("sub2api", true)], ["m"]);
+
+    expect(form.mcp_profile).toBe("none");
   });
 });
 

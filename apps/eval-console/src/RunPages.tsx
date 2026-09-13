@@ -3,7 +3,7 @@ import type { MouseEvent } from "react";
 import { getJson, awaitPreflight, formatDuration, formatTime, numericScore, postJson, scoreLabel } from "./types";
 import type { AgentEvent, Artifact, Check, ComparisonDetail, EventsResponse, PreflightCheck, ProviderModelListing, ProviderSummary, ReasoningLevels, Registry, RunDetail, RunJob, RunPlan, RunSummary } from "./types";
 import { blockerSummary, blockingChecks } from "./launchGate";
-import { chooseModel, chooseReasoning, initialForm, agentModels, nonAgentModels, isMeaningfulChoice, preferredModelFor } from "./launchDefaults";
+import { chooseModel, chooseReasoning, initialForm, agentModels, nonAgentModels, isMeaningfulChoice, preferredModelFor, taskExecution } from "./launchDefaults";
 import { CheckRow, ConfigValue, EmptyState, ErrorState, EventRow, Icon, MetricCard, PhaseTag, RunMeta, ScoreBars, SectionHeader, StatusBadge } from "./components";
 
 type RunBucket = "" | "running" | "failed" | "review" | "passed";
@@ -332,6 +332,20 @@ export function LaunchDialog({ onClose, onOpenRun }: { onClose: () => void; onOp
   }, [job]);
 
   const update = (key: keyof LaunchForm, value: string) => setForm((current) => ({ ...current, [key]: value }));
+
+  // Switching Task re-applies that Task's own requirements. Carrying the
+  // previous Task's MCP or sandbox profile into a different Task starts a run
+  // whose tools do not match what the Task declares.
+  const changeTask = (value: string) => {
+    const declared = taskExecution(registry, value);
+    setForm((current) => ({
+      ...current,
+      task_id: value,
+      agent: declared.agent || current.agent,
+      mcp_profile: declared.mcp_profile || current.mcp_profile,
+      sandbox_profile: declared.sandbox_profile || current.sandbox_profile,
+    }));
+  };
   // Only chat-capable models can act as an Agent; an image model would start a
   // run that fails once the container is already up.
   const modelOptions = agentModels(models?.models || []);
@@ -459,7 +473,7 @@ export function LaunchDialog({ onClose, onOpenRun }: { onClose: () => void; onOp
       <div className="launch-footer"><button className="button ghost" onClick={onClose}>关闭</button></div>
     </> : step === "configure" ? <>
       <div className="launch-form">
-        <div className="form-section"><div className="form-section-title"><span>Task</span><small>测试内容和 TestPlan 来自任务包</small></div><SelectField label="Task Bundle" value={form.task_id} onChange={(value) => update("task_id", value)} options={(registry?.tasks || []).map((entry) => [entry.id, `${entry.id}${entry.checks != null ? ` · ${entry.checks} checks` : ""}`] as [string, string])} /></div>
+        <div className="form-section"><div className="form-section-title"><span>Task</span><small>测试内容和 TestPlan 来自任务包</small></div><SelectField label="Task Bundle" value={form.task_id} onChange={changeTask} options={(registry?.tasks || []).map((entry) => [entry.id, `${entry.id}${entry.checks != null ? ` · ${entry.checks} checks` : ""}`] as [string, string])} /></div>
         <div className="form-section"><div className="form-section-title"><span>执行者</span><small>用哪个 Agent 完成这个 Task</small></div><div className="form-grid">
           <SelectField label="Agent" value={form.agent} onChange={(value) => update("agent", value)} options={(registry?.agents || []).map((entry) => [entry.id, agentLabel(entry)] as [string, string])} disabled={!registry?.agents?.length} />
         </div>
