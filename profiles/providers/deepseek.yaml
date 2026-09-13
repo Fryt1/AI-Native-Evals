@@ -1,0 +1,16 @@
+id: deepseek
+name: DeepSeek 官方
+# Create this file before selecting this provider:
+#   UPSTREAM_BASE_URL=https://api.deepseek.com/v1
+#   UPSTREAM_API_KEY=sk-...
+env_file: config/providers/deepseek.env
+wire_api: [chat]
+# Fallback vocabulary, used only when the endpoint cannot be interrogated.
+# Quoted deliberately: bare `off` is a YAML boolean, not a level name.
+reasoning_levels: ["off", "low", "high", "max"]
+default_reasoning: high
+models:
+  - id: deepseek-v4.1-flash
+    name: DeepSeek V4.1 Flash
+  - id: deepseek-v4-pro
+    name: DeepSeek V4 Pro

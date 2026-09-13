@@ -1,5 +1,8 @@
+# Legacy model binding. New selections should name a provider
+# (profiles/providers/) plus a model the provider actually serves;
+# this file remains so existing runs and commands keep resolving.
 id: sub2api-deepseek
 provider: eval
-model: deepseek/deepseek-v4-flash
+model: deepseek/deepseek-v4.1-flash
 protocol: responses
 reasoning_effort: high

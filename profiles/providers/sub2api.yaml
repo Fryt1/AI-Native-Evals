@@ -1,0 +1,26 @@
+id: sub2api
+name: Sub2API 中转
+# The env file owns the upstream base URL and credential; it stays gitignored.
+env_file: config/.env.local
+# This relay answers both protocols, so it can serve Codex (responses) and DSH
+# (chat-completions) from one upstream. Order is preference.
+wire_api: [responses, chat]
+# Fallback vocabulary. Live discovery asks the provider first and only falls
+# back to this list when the endpoint cannot be interrogated.
+reasoning_levels: ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+default_reasoning: high
+# Display metadata only. Which models are selectable is decided by the live
+# /v1/models response, never by this list.
+models:
+  - id: gpt-5.6-luna
+    name: GPT-5.6 Luna
+  - id: gpt-5.6-sol
+    name: GPT-5.6 Sol
+  - id: gpt-5.6-terra
+    name: GPT-5.6 Terra
+  - id: gpt-6-astra
+    name: GPT-6 Astra
+  - id: deepseek/deepseek-v4.1-flash
+    name: DeepSeek V4.1 Flash
+  - id: deepseek/deepseek-v4-pro
+    name: DeepSeek V4 Pro
