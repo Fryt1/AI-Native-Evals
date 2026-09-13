@@ -1,0 +1,7 @@
+# The Console is the only JavaScript package. Declaring it as a workspace is
+# what makes a plain `pnpm install` at the repository root install it: without
+# this file the root manifest has no dependencies, so pnpm reports success and
+# installs nothing, leaving `pnpm build` to fail on a machine that has never
+# built the Console.
+packages:
+  - apps/eval-console

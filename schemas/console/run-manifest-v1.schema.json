@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-native.local/schemas/console/run-manifest-v1.schema.json",
+  "title": "AI-Native Eval Run Manifest v1",
+  "type": "object",
+  "required": ["schema_version", "status", "run"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "status": { "enum": ["prepared", "starting", "running", "evaluating", "completed", "failed", "stopped"] },
+    "run": { "type": "object", "required": ["run_id", "task_id", "agent"], "properties": { "run_id": { "type": "string" }, "task_id": { "type": "string" }, "agent": { "type": "string" }, "model": { "type": ["string", "null"] }, "protocol": { "type": ["string", "null"] } }, "additionalProperties": true },
+    "runtime": { "type": "object" },
+    "snapshots": { "type": "object" },
+    "paths": { "type": "object" }
+  },
+  "additionalProperties": true
+}

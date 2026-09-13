@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-native.local/schemas/console/evaluation-report-v1.schema.json",
+  "title": "AI-Native Evaluation Report v1",
+  "type": "object",
+  "required": ["schema_version", "run_id", "task_id", "decision", "checks"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "run_id": { "type": "string" },
+    "task_id": { "type": "string" },
+    "decision": { "enum": ["pass", "fail", "review", "not_evaluable", null] },
+    "outcome_score": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+    "quality_score": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+    "process_score": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+    "checks": { "type": "array", "items": { "$ref": "#/$defs/check" } },
+    "errors": { "type": "array", "items": { "type": "string" } }
+  },
+  "$defs": { "check": { "type": "object", "required": ["check_id", "phase", "evaluator", "status"], "properties": { "check_id": { "type": "string" }, "phase": { "enum": ["outcome", "quality", "process"] }, "evaluator": { "type": "string" }, "status": { "type": "string" }, "score": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }, "depends_on": { "type": "array", "items": { "type": "string" } }, "evidence_refs": { "type": "array", "items": { "type": "string" } } }, "additionalProperties": true } }
+}

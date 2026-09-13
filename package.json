@@ -1,0 +1,12 @@
+{
+  "name": "ai-native-evals-workspace",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Repository-level entry points for the AI-Native Eval Console.",
+  "packageManager": "pnpm@11.7.0",
+  "scripts": {
+    "dev": "pnpm --filter ai-native-eval-console dev",
+    "build": "pnpm --filter ai-native-eval-console build",
+    "test": "pnpm --filter ai-native-eval-console test"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-native.local/schemas/console/comparison-v1.schema.json",
+  "title": "AI-Native Comparison v1",
+  "type": "object",
+  "required": ["schema_version", "comparison_id", "invariant", "runs"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "comparison_id": { "type": "string" },
+    "created_at": { "type": ["string", "null"] },
+    "invariant": { "type": "object" },
+    "runs": { "type": "array", "items": { "type": "object", "required": ["run_id"], "properties": { "run_id": { "type": "string" }, "agent": { "type": ["string", "null"] }, "model": { "type": ["string", "null"] } }, "additionalProperties": true } }
+  }
+}

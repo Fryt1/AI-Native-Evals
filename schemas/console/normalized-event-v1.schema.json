@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-native.local/schemas/console/normalized-event-v1.schema.json",
+  "title": "AI-Native Normalized Agent Event v1",
+  "type": "object",
+  "required": ["schema_version", "event_id", "run_id", "seq", "type", "actor", "summary"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "event_id": { "type": "string" },
+    "run_id": { "type": "string" },
+    "seq": { "type": "integer", "minimum": 0 },
+    "occurred_at": { "type": ["string", "null"] },
+    "type": { "type": "string" },
+    "actor": { "type": "object", "required": ["kind", "id"], "properties": { "kind": { "type": "string" }, "id": { "type": "string" } }, "additionalProperties": true },
+    "turn_id": { "type": ["string", "null"] },
+    "step_id": { "type": ["string", "null"] },
+    "parent_event_id": { "type": ["string", "null"] },
+    "call_id": { "type": ["string", "null"] },
+    "status": { "type": ["string", "null"] },
+    "duration_ms": { "type": ["integer", "null"], "minimum": 0 },
+    "summary": { "type": "string" },
+    "payload": {},
+    "artifact_refs": { "type": "array", "items": { "type": "string" } },
+    "source": { "type": "object" }
+  },
+  "additionalProperties": true
+}
