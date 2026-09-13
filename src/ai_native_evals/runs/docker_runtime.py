@@ -315,19 +315,14 @@ def _agent_run_args(
     run = _run_metadata(manifest)
     paths = manifest["paths"]
     sandbox = _sandbox_metadata(run)
-    profile = run.get("agent_profile") if isinstance(run.get("agent_profile"), dict) else {}
-    legacy_profile = not bool(profile)
-    workdir = str(
-        profile.get("workdir")
-        or ("/workspace/game-engine" if legacy_profile else "/workspace")
-    )
+    # A run always has a resolved profile; `_agent_profile` refuses otherwise.
+    profile = _agent_profile(run)
+    workdir = str(profile.get("workdir") or "/workspace")
     adapter = str(profile.get("adapter") or run.get("agent", "codex"))
     profile_id = str(profile.get("id") or run.get("agent", adapter))
-    writable_paths = profile.get("writable_paths", [])
+    writable_paths = profile.get("writable_paths") or []
     if not isinstance(writable_paths, list):
         writable_paths = []
-    if not writable_paths and legacy_profile:
-        writable_paths = ["/opt/codex-home"]
     args = [
         "run",
         "--detach",
@@ -452,6 +447,21 @@ def _run_metadata(manifest: dict[str, Any]) -> dict[str, Any]:
     value = manifest.get("run")
     if not isinstance(value, dict):
         raise DockerRuntimeError("run manifest has no resolved run metadata")
+    return value
+
+
+def _agent_profile(run: dict[str, Any]) -> dict[str, Any]:
+    """The run's resolved Agent profile, or a hard failure.
+
+    A run without a profile has no image, no workdir and no command, so every
+    downstream decision would be a guess. Failing here names the problem instead
+    of letting it become a container that starts with the wrong settings.
+    """
+    value = run.get("agent_profile")
+    if not isinstance(value, dict) or not value:
+        raise DockerRuntimeError(
+            f"run manifest has no resolved agent_profile for agent {run.get('agent')!r}"
+        )
     return value
 
 

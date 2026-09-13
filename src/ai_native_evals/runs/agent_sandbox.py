@@ -103,24 +103,20 @@ def run_evaluator_agent(
     if not isinstance(run, dict) or not isinstance(paths, dict):
         raise DockerRuntimeError("run manifest is missing run or paths metadata")
 
-    profile = agent_profile or (
-        run.get("agent_profile") if isinstance(run.get("agent_profile"), dict) else {}
-    )
-    legacy_profile = not bool(profile)
+    profile = agent_profile or run.get("agent_profile")
+    if not isinstance(profile, dict) or not profile:
+        raise DockerRuntimeError(
+            f"run manifest has no resolved agent_profile for agent {run.get('agent')!r}"
+        )
     adapter = str(profile.get("adapter") or run.get("agent", "codex"))
     profile_id = str(profile.get("id") or run.get("agent", adapter))
     # The log parser is its own fact, resolved by the profile. It used to be the
     # adapter value, which made an Agent's identity decide how its log is read.
     trace_parser = str(profile.get("trace_parser") or adapter)
-    workdir = str(
-        profile.get("workdir")
-        or ("/workspace/game-engine" if legacy_profile else "/workspace")
-    )
-    writable_paths = profile.get("writable_paths", [])
+    workdir = str(profile.get("workdir") or "/workspace")
+    writable_paths = profile.get("writable_paths") or []
     if not isinstance(writable_paths, list):
         writable_paths = []
-    if not writable_paths and legacy_profile:
-        writable_paths = ["/opt/codex-home"]
 
     run_id = str(run.get("run_id", run_dir.name))
     safe_role = _safe_name(role)

@@ -10,81 +10,88 @@ from ai_native_evals.mcp import project_dsh_mcp_servers
 from ai_native_evals.runs.resolver import resolve_run
 
 
-def test_resolve_run_substitutes_mcp_profile_variables(tmp_path: Path) -> None:
-    (tmp_path / "game-engine").mkdir()
-    (tmp_path / "dsh").mkdir()
-    config = tmp_path / "config.yaml"
-    config.write_text(
-        """
+def _write(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def _repo(tmp_path: Path, mcp_profile: str, servers_yaml: str) -> Path:
+    """A minimal repository, with profiles and a Task in their real locations.
+
+    Built as files rather than as inline config: the resolver reads profiles and
+    Tasks from disk only.
+    """
+    _write(
+        tmp_path / "config" / "eval.yaml",
+        f"""
+version: 1
+task_roots:
+- tasks
+profile_roots:
+  agents: profiles/agents
+  models: profiles/models
+  mcp: profiles/mcp
+  sandboxes: profiles/sandboxes
 paths:
-  game_engine: game-engine
-  dsh: dsh
   runs_root: EvalRuns
 defaults:
   agent: codex
-  model_profile: deepseek
-  mcp_profile: ue5
-model_profiles:
-  deepseek:
-    model: deepseek/deepseek-v4-flash
-agents:
-  codex:
-    image: test-codex
-mcp_profiles:
-  ue5:
-    host: host.docker.internal
-    port: 8000
-    servers:
-      unreal-mcp:
-        transport: streamable-http
-        url: http://${MCP_HOST}:${MCP_PORT}/mcp
-      extra:
-        transport: stdio
-        command: /opt/extra/server
-        env:
-          TARGET: ${MCP_HOST}
+  model_profile: test-model
+  mcp_profile: {mcp_profile}
 """,
-        encoding="utf-8",
+    )
+    _write(
+        tmp_path / "profiles" / "agents" / "codex.yaml",
+        "id: codex\nadapter: codex\nimage: test-codex\n",
+    )
+    _write(
+        tmp_path / "profiles" / "models" / "test-model.yaml",
+        "id: test-model\nmodel: test/model\nprotocol: responses\n",
+    )
+    _write(
+        tmp_path / "profiles" / "mcp" / f"{mcp_profile}.yaml",
+        f"id: {mcp_profile}\n{servers_yaml}",
+    )
+    _write(
+        tmp_path / "tasks" / "test" / "task.yaml",
+        'id: test\nversion: 1\nprompt_file: prompt.md\nresources: []\n',
+    )
+    _write(tmp_path / "tasks" / "test" / "prompt.md", "Do the thing.")
+    return tmp_path
+
+
+def test_resolve_run_substitutes_mcp_profile_variables(tmp_path: Path) -> None:
+    root = _repo(
+        tmp_path,
+        "ue5",
+        """
+host: host.docker.internal
+port: 8000
+servers:
+  unreal-mcp:
+    transport: streamable-http
+    url: http://${MCP_HOST}:${MCP_PORT}/mcp
+  extra:
+    transport: stdio
+    command: /opt/extra/server
+    env:
+      TARGET: ${MCP_HOST}
+""",
     )
 
-    spec = resolve_run(tmp_path, "test", config_path=config)
+    spec = resolve_run(root, "test")
 
-    assert spec.mcp_ue5 is True
-    assert spec.mcp_blender is False
     assert spec.mcp_servers["unreal-mcp"]["url"] == "http://host.docker.internal:8000/mcp"
     assert spec.mcp_servers["extra"]["env"]["TARGET"] == "host.docker.internal"
 
 
 def test_prepare_run_persists_resolved_mcp_servers(tmp_path: Path) -> None:
-    (tmp_path / "game-engine").mkdir()
-    (tmp_path / "dsh").mkdir()
-    config = tmp_path / "config.yaml"
-    config.write_text(
-        """
-paths:
-  game_engine: game-engine
-  dsh: dsh
-  runs_root: EvalRuns
-defaults:
-  agent: codex
-  model_profile: deepseek
-  mcp_profile: none
-model_profiles:
-  deepseek:
-    model: deepseek/deepseek-v4-flash
-agents:
-  codex:
-    image: test-codex
-mcp_profiles:
-  none:
-    servers: {}
-""",
-        encoding="utf-8",
-    )
-    spec = resolve_run(tmp_path, "test", config_path=config)
+    root = _repo(tmp_path, "none", "servers: {}\n")
+
+    spec = resolve_run(root, "test")
     from ai_native_evals.runs.lifecycle import load_manifest, prepare_run
 
-    run_dir = prepare_run(tmp_path, spec)
+    run_dir = prepare_run(root, spec)
     manifest = load_manifest(run_dir)
     mcp_path = Path(manifest["paths"]["mcp_servers"])
     assert json.loads(mcp_path.read_text(encoding="utf-8")) == {}

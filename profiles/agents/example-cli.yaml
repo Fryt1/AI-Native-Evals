@@ -1,31 +1,16 @@
 id: example-cli
-label: 示例 CLI Agent
+label: 示例 CLI Agent（含工具循环）
 description: >-
-  一个单次命令 Agent 的模板：读取 prompt 文件，调用模型，输出结果。
-  复制这个文件与 docker/example-cli/Dockerfile，改掉命令即可接入新的 CLI Agent。
-# The Docker path never consults this; it selects behaviour for the in-process
-# Inspect solver. Set it to the id whose event parsing is closest so the trace
-# is still normalized -- `codex` passes through anything it does not recognise.
-adapter: codex
+  一个能真正干活的单次命令 Agent 模板：读 prompt、循环调用模型、执行模型要求的
+  文件与命令操作。复制这个 profile 与 docker/example-cli/ 即可接入新的 CLI Agent。
+# adapter 与 trace_parser 都不是必需的。
+#   adapter      —— 只影响进程内 Inspect 路径；Docker 路径不看它。
+#   trace_parser —— 不写则退化为 pass-through，仍产生事件，只是识别不出类型。
 image_repository: ai-native-example-cli
 agent_version: 1.0.0
-protocol: responses
-workdir: /workspace
-# The container's root filesystem is read-only, so every path the Agent writes
-# outside /workspace has to be listed here.
+options:
+  trace_parser: codex
+# 容器根文件系统只读。Agent 写到 /workspace 之外时必须在这里列出，
+# 否则容器内会以权限错误失败，看起来像 Agent 的 bug。
 writable_paths:
   - /tmp/home
-environment:
-  # The framework already exports EVAL_MODEL, EVAL_GATEWAY_URL,
-  # EVAL_GATEWAY_API_KEY, EVAL_TASK_PROMPT_FILE and friends. Only an Agent's own
-  # spelling needs declaring, and it maps to what is already there.
-  HOME: /tmp/home
-  EXAMPLE_MODEL: ${EVAL_MODEL}
-  EXAMPLE_REASONING: ${EVAL_REASONING_EFFORT}
-capabilities:
-  - filesystem
-  - shell
-options:
-  # The real invocation is the image's ENTRYPOINT, so nothing is duplicated
-  # here. A profile needing different flags sets `entrypoint` + `command`.
-  executable: example-cli

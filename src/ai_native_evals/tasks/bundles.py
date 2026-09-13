@@ -1,4 +1,4 @@
-"""Filesystem-backed Task bundles with a legacy eval.yaml fallback."""
+"""Filesystem-backed Task bundles."""
 
 from __future__ import annotations
 
@@ -33,7 +33,6 @@ class TaskBundle:
     metadata: dict[str, Any] = field(default_factory=dict)
     verify: dict[str, Any] = field(default_factory=dict)
     source_path: Path | None = None
-    legacy: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         """Return the resolved task definition used by a run manifest."""
@@ -49,7 +48,6 @@ class TaskBundle:
             "metadata": copy.deepcopy(self.metadata),
             "verify": copy.deepcopy(self.verify),
             "source_path": str(self.source_path) if self.source_path else None,
-            "legacy": self.legacy,
         }
 
     def resource_specs(
@@ -92,14 +90,14 @@ def load_task_bundle(
     *,
     config: Mapping[str, Any] | None = None,
 ) -> TaskBundle:
-    """Load tasks/<id> first, falling back to legacy inline task config."""
+    """Load tasks/<id> from the declared task roots."""
     config = config or {}
     for root in _task_roots(repo_root, config):
         task_dir = root / task_id
         manifest_path = task_dir / "task.yaml"
         if manifest_path.is_file():
             return _load_bundle_file(task_id, task_dir, manifest_path)
-    return _load_legacy_bundle(repo_root, task_id, config)
+    raise TaskBundleError(f"task bundle does not exist: {task_id}")
 
 
 def list_task_bundles(
@@ -107,7 +105,7 @@ def list_task_bundles(
     *,
     config: Mapping[str, Any] | None = None,
 ) -> tuple[str, ...]:
-    """List filesystem Task bundles and legacy-only task ids without duplicates."""
+    """List the Task bundles present under the declared task roots."""
     config = config or {}
     ids: set[str] = set()
     for root in _task_roots(repo_root, config):
@@ -116,9 +114,6 @@ def list_task_bundles(
         for child in root.iterdir():
             if child.is_dir() and (child / "task.yaml").is_file():
                 ids.add(child.name)
-    tasks = config.get("tasks", {})
-    if isinstance(tasks, Mapping):
-        ids.update(str(key) for key in tasks)
     return tuple(sorted(ids))
 
 
@@ -166,89 +161,6 @@ def _load_bundle_file(task_id: str, task_dir: Path, manifest_path: Path) -> Task
         verify=dict(verify),
         source_path=manifest_path,
     )
-
-
-def _load_legacy_bundle(
-    repo_root: Path,
-    task_id: str,
-    config: Mapping[str, Any],
-) -> TaskBundle:
-    tasks = config.get("tasks", {})
-    if "task_roots" in config and not any(
-        (root / task_id / "task.yaml").is_file() for root in _task_roots(repo_root, config)
-    ):
-        raise TaskBundleError(f"task bundle does not exist: {task_id}")
-    if isinstance(tasks, Mapping) and tasks and task_id not in tasks:
-        raise TaskBundleError(f"legacy task does not exist: {task_id}")
-    task_config = tasks.get(task_id, {}) if isinstance(tasks, Mapping) else {}
-    if not isinstance(task_config, Mapping):
-        raise TaskBundleError(f"task {task_id!r} must be a mapping")
-    prompt = task_config.get("prompt")
-    if prompt is None:
-        prompt = (
-            f"Execute evaluation task {task_id!r} in /workspace. "
-            "Read project instructions before making changes and verify the result."
-        )
-    if not isinstance(prompt, str):
-        raise TaskBundleError(f"task {task_id!r} prompt must be a string")
-    test_plan = task_config.get("test_plan") or {}
-    if not isinstance(test_plan, Mapping):
-        raise TaskBundleError(f"task {task_id!r} test_plan must be a mapping")
-    verify = task_config.get("verify") or {}
-    if not isinstance(verify, Mapping):
-        raise TaskBundleError(f"task {task_id!r} verify must be a mapping")
-    resources = task_config.get("resources")
-    if resources is None:
-        resources = _legacy_default_resources(config)
-    if not isinstance(resources, list) or not all(
-        isinstance(value, Mapping) for value in resources
-    ):
-        raise TaskBundleError(f"task {task_id!r} resources must be a list of mappings")
-    execution = {
-        key: task_config[key]
-        for key in ("agent", "model_profile", "mcp_profile")
-        if key in task_config
-    }
-    return TaskBundle(
-        task_id=task_id,
-        version="legacy",
-        prompt=prompt,
-        test_plan=dict(test_plan),
-        resources=tuple(dict(value) for value in resources),
-        dataset=_legacy_dataset(task_config),
-        execution=execution,
-        verify=dict(verify),
-        source_path=None,
-        legacy=True,
-    )
-
-
-def _legacy_default_resources(config: Mapping[str, Any]) -> list[dict[str, Any]]:
-    """Preserve old inline-config behavior without making it the new default."""
-    paths = config.get("paths", {})
-    if not isinstance(paths, Mapping):
-        return []
-    resources: list[dict[str, Any]] = []
-    if paths.get("game_engine"):
-        resources.append(
-            {
-                "id": "game-engine",
-                "kind": "repository",
-                "source": "game_engine",
-                "mount": "game-engine",
-            }
-        )
-    if paths.get("dsh"):
-        resources.append(
-            {
-                "id": "dsh",
-                "kind": "repository",
-                "source": "dsh",
-                "mount": "ai-native-dsh",
-                "required": False,
-            }
-        )
-    return resources
 
 
 def _task_roots(repo_root: Path, config: Mapping[str, Any]) -> tuple[Path, ...]:
@@ -314,13 +226,6 @@ def _load_dataset(task_dir: Path, payload: Mapping[str, Any]) -> tuple[dict[str,
         values = raw_dataset if raw_dataset is not None else []
     if not isinstance(values, list) or not all(isinstance(value, Mapping) for value in values):
         raise TaskBundleError(f"task {task_dir.name!r} dataset must be a list of mappings")
-    return tuple(dict(value) for value in values)
-
-
-def _legacy_dataset(task_config: Mapping[str, Any]) -> tuple[dict[str, Any], ...]:
-    values = task_config.get("dataset", [])
-    if not isinstance(values, list) or not all(isinstance(value, Mapping) for value in values):
-        return ()
     return tuple(dict(value) for value in values)
 
 

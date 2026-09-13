@@ -157,7 +157,6 @@ class CodexAdapter:
             adapter=self.adapter_id,
             agent_id=spec.agent_id,
         )
-        _write_legacy_aliases(run_dir, events_path, last_message_path)
         finished = _utc_now()
         result = AgentRunResult(
             agent_id=spec.agent_id,
@@ -187,18 +186,6 @@ class CodexAdapter:
 def _option_path(spec: AgentLaunchSpec, key: str, default: Path) -> Path:
     value = spec.options.get(key)
     return Path(str(value)).resolve() if value else default
-
-
-def _write_legacy_aliases(run_dir: Path, events_path: Path, last_message_path: Path) -> None:
-    """Keep the old filenames readable while the canonical names evolve."""
-    if events_path.name != "codex-events.jsonl":
-        (run_dir / "codex-events.jsonl").write_text(
-            events_path.read_text(encoding="utf-8", errors="replace"), encoding="utf-8"
-        )
-    if last_message_path.is_file() and last_message_path.name != "codex-last-message.txt":
-        (run_dir / "codex-last-message.txt").write_text(
-            last_message_path.read_text(encoding="utf-8", errors="replace"), encoding="utf-8"
-        )
 
 
 async def _terminate_process_tree(pid: int) -> None:

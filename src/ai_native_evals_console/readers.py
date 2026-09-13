@@ -149,7 +149,6 @@ def normalize_event(raw: Mapping[str, Any], *, run_id: str, seq: int) -> dict[st
     event_id = str(raw.get("event_id") or raw.get("id") or merged.get("id") or f"evt_{seq:06d}")
     summary = str(raw.get("summary") or _value_text(merged) or event_type.replace("_", " "))
     return {
-        "schema_version": int(raw.get("schema_version") or 1),
         "event_id": event_id,
         "run_id": str(raw.get("run_id") or run_id),
         "seq": int(raw.get("seq") if isinstance(raw.get("seq"), int) else seq),
@@ -167,9 +166,8 @@ def normalize_event(raw: Mapping[str, Any], *, run_id: str, seq: int) -> dict[st
         "artifact_refs": list(raw.get("artifact_refs") or []),
         "source": {
             "adapter": str(source.get("adapter") or raw.get("adapter") or actor_id),
-            "source_type": str(source.get("source_type") or raw.get("source_type") or "legacy"),
+            "source_type": str(source.get("source_type") or raw.get("source_type") or "unknown"),
         },
-        "legacy": not bool(raw.get("schema_version")),
     }
 
 
@@ -202,7 +200,6 @@ def _digest_event(item: Mapping[str, Any], *, run_id: str, seq: int) -> dict[str
         or kind.replace("_", " ")
     )
     return {
-        "schema_version": 1,
         "event_id": f"digest_{seq:06d}",
         "run_id": run_id,
         "seq": seq,
@@ -219,7 +216,6 @@ def _digest_event(item: Mapping[str, Any], *, run_id: str, seq: int) -> dict[str
         "payload": {"digest": dict(item)},
         "artifact_refs": [],
         "source": {"adapter": "digest", "source_type": "digest.timeline"},
-        "legacy": True,
     }
 
 

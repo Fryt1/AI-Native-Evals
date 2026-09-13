@@ -16,15 +16,26 @@ def test_filesystem_bundle_is_authoritative_and_has_no_implicit_project(tmp_path
         encoding="utf-8",
     )
     config = tmp_path / "eval.yaml"
+    # Profiles live in their own files; the config only points at the roots.
+    for relative, body in (
+        ("profiles/agents/codex.yaml", "id: codex\nadapter: codex\nimage: test-agent\n"),
+        ("profiles/models/m.yaml", "id: m\nmodel: test\n"),
+        ("profiles/mcp/none.yaml", "id: none\nservers: {}\n"),
+    ):
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body, encoding="utf-8")
     config.write_text(
         """
- task_roots: [tasks]
- paths: {runs_root: EvalRuns}
- defaults: {agent: codex, model_profile: m, mcp_profile: none}
- model_profiles: {m: {model: test}}
- agents: {codex: {image: test-agent}}
- mcp_profiles: {none: {servers: {}}}
- """,
+version: 1
+task_roots: [tasks]
+profile_roots:
+  agents: profiles/agents
+  models: profiles/models
+  mcp: profiles/mcp
+paths: {runs_root: EvalRuns}
+defaults: {agent: codex, model_profile: m, mcp_profile: none}
+""",
         encoding="utf-8",
     )
 

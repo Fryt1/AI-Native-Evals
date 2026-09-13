@@ -1,173 +1,155 @@
-# Adding an Agent that runs as a single command
+# Adding an Agent
 
-Most command-line Agents — `claude`, `gemini`, `aider`, `cursor-agent`, and the
-next one — share one shape: they take a prompt, run, and print a result. For
-those, **a profile is the whole integration**. No Python, no adapter class.
+Read this first, because the honest answer is not one number.
 
-This document is the recipe, and `profiles/agents/example-cli-agent.yaml.txt`
-next to it is a template you can copy.
+**How much work it is depends entirely on what the Agent already does.**
+A finished command-line coding Agent is a profile. A thin wrapper around a chat
+model is a program. Those are not the same task and treating them as one wastes
+a day.
 
-## What a run actually does
+| The Agent is… | You write | Because |
+| --- | --- | --- |
+| **A finished CLI** — `claude`, `gemini`, `aider`, `codex`, `dsh` | A profile and a Dockerfile | It already has a tool loop, a file editor and a shell. You are only telling the framework how to start it. |
+| **A model call** — your own script that posts a prompt and prints the reply | A profile, a Dockerfile, **and the tool loop** | It can answer a question but cannot touch a file. Every Task that must produce an artifact will fail. |
+| **A new protocol** — JSON-RPC, ACP, a socket handshake | All of the above **plus a bridge** | A one-shot command cannot express a handshake. See `docker/dsh-agent/acp-runner.mjs`. |
 
-Worth knowing, because it explains why a profile is enough:
+`docker/example-cli/` is the second kind, written out in full. It is the useful
+one to read, because the first kind needs no explanation and the third is rare.
 
-```
-host                          container
-  │                                │
-  ├─ prepare the run ──────────────┤
-  │   · write the Task prompt      │
-  │     to /run-config/task-prompt.md
-  │   · write MCP servers to       │
-  │     /run-config/mcp-servers.json
-  │   · mount the workspace        │
-  │                                │
-  ├─ docker run <image> ───────────┤
-  │   with the profile's           │
-  │   entrypoint + command         │
-  │                                │
-  └─ read /workspace/trace ◄───────┘
-      and evidence
-```
+## Why a profile is enough for a finished CLI
 
-The container is started with **the profile's `entrypoint` and `command`**. The
-framework does not know or care which Agent is inside; it supplies the prompt
-and reads back what the Agent wrote.
+The container is started with the profile's `entrypoint` and `command`. The
+framework does not know which Agent is inside: it mounts the Task prompt, mounts
+the MCP configuration, and reads back the trace the Agent wrote.
 
-`EVAL_AGENT_ADAPTER` is passed into the container, but nothing in the image
-reads it — the container's behaviour comes entirely from `entrypoint`,
-`command` and `environment`. That is why a new single-command Agent needs no
-framework code.
+`EVAL_AGENT_ADAPTER` is passed into the container, but nothing in the image reads
+it. Behaviour comes entirely from `entrypoint`, `command` and `environment`.
 
-## The recipe
+## A finished CLI: profile and Dockerfile
 
-Create `profiles/agents/<your-agent>.yaml`:
+`profiles/agents/<id>.yaml`:
 
 ```yaml
 id: my-agent
-label: My Agent（一行说明）
-description: 一两句话说明它是什么、什么时候用。
-adapter: codex                       # see "adapter" below
+label: My Agent
 image_repository: ai-native-my-agent
-agent_version: 1.0.0                 # tag = <repository>:<version>
-protocol: responses                  # how the model is called
+agent_version: 1.0.0
 workdir: /workspace
 writable_paths:
-  - /tmp/home                        # anywhere the Agent writes outside /workspace
-system_prompt: |                     # optional: prepended by the entrypoint
-  You are being evaluated. Work only inside /workspace.
-environment:
-  HOME: /tmp/home
-  MY_AGENT_MODEL: ${MODEL}
-  MY_AGENT_REASONING: ${REASONING_EFFORT}
-capabilities:
-  - filesystem
-  - shell
+  - /tmp/home
 options:
-  executable: my-agent
+  trace_parser: codex
 ```
 
-Then create the image. The Dockerfile is the only file besides the profile:
+`docker/my-agent/Dockerfile`:
 
 ```dockerfile
-ARG NODE_BASE_IMAGE=node:22-bookworm
-FROM ${NODE_BASE_IMAGE}
+ARG CODEX_BASE_IMAGE=ai-native-codex-agent:0.153.4
+FROM ${CODEX_BASE_IMAGE}
 ARG MY_AGENT_VERSION=1.0.0
-LABEL ai.native.agent="my-agent" \
-      ai.native.agent.version="$MY_AGENT_VERSION"
+LABEL ai.native.agent="my-agent" ai.native.agent.version="$MY_AGENT_VERSION"
+USER root
 RUN npm install --global --no-fund --no-audit "my-agent@${MY_AGENT_VERSION}"
-RUN mkdir -p /workspace /tmp/home && chown -R node:node /workspace /tmp/home
 USER node
 WORKDIR /workspace
-ENTRYPOINT ["my-agent", "--prompt-file"]
+ENTRYPOINT ["my-agent", "--print"]
 ```
 
-Build it and tag it with the version:
+Then:
 
 ```powershell
 wsl.exe -e docker build -f docker/my-agent/Dockerfile -t ai-native-my-agent:1.0.0 .
+pwsh -File tools/eval.ps1 check -Task <task-id>
 ```
 
-That is the whole thing. `doctor` will list the new Agent, the Console will show
-it, and it can be verified with the static and smoke checks.
+The Environment page verifies it: **静态检查**, then **真实测试**.
 
-## The three fields that matter
+### The three fields that matter
 
-### `command` — how the prompt reaches the Agent
-
-The Task prompt is a **file**, `$EVAL_TASK_PROMPT_FILE` (default
-`/run-config/task-prompt.md`). It is never passed as an argv element: prompts
-are Markdown, and an earlier inline version silently lost a table's rows.
-
-Most Agents accept a prompt one of these ways:
+**`command`** — how the prompt reaches the Agent. The prompt is a **file** at
+`$EVAL_TASK_PROMPT_FILE`. Read it; do not expect it in argv.
 
 ```yaml
-# 1. The Agent can read a file itself
+# The CLI reads a file itself
 command: ["--prompt-file", "${TASK_PROMPT}"]
-
-# 2. The Agent reads stdin
+# The CLI reads stdin
 entrypoint: sh
 command: ["-c", "my-agent --print < ${TASK_PROMPT}"]
-
-# 3. The Agent takes the prompt as an argument (small prompts only)
-entrypoint: sh
-command: ["-c", "my-agent \"$(cat ${TASK_PROMPT})\""]
 ```
 
-Prefer 1 or 2. Option 3 goes through a shell, so a prompt containing quotes,
-backticks or `$(...)` is partially interpreted — the same class of bug as the
-inline-argv one.
+Avoid putting the prompt text in argv through a shell. A prompt is Markdown: it
+contains quotes, backticks and `$(...)`, and a shell will act on them. This is
+not hypothetical — passing the prompt inline once lost a table's rows, and the
+Agent reported the missing names as an ambiguity in the request.
 
-### `environment` — how the model and MCP reach the Agent
+**`environment`** — the framework already exports `EVAL_MODEL`,
+`EVAL_GATEWAY_URL`, `EVAL_GATEWAY_API_KEY`, `EVAL_REASONING_EFFORT`,
+`EVAL_TASK_PROMPT_FILE` and `EVAL_MCP_SERVERS_FILE`. Declare only the names your
+Agent uses, mapped to those:
 
-These placeholders are substituted from the resolved run:
+```yaml
+environment:
+  MY_AGENT_MODEL: ${EVAL_MODEL}
+```
+
+**`writable_paths`** — the container root is read-only. Anything the Agent
+writes outside `/workspace` must be listed, or the write fails with a permission
+error inside the container that looks like an Agent bug. An Agent that keeps a
+cache or config in `$HOME` needs `$HOME` listed.
+
+## A model call: you must write the tool loop
+
+This is what `docker/example-cli/entrypoint.mjs` does. The loop is:
+
+```
+send the prompt + tool definitions to the model
+  → the model asks for a tool
+  → run the tool
+  → send the result back
+  → repeat until the model asks for nothing
+```
+
+The tools a coding task needs are small — `run_command`, `write_file`,
+`read_file` — but without them the Agent can only talk.
+
+Two things that are easy to get wrong:
+
+- **Bound the loop.** An unbounded loop holds the container until the run
+  timeout. The template stops after 24 turns and says so in its final message.
+- **Return tool errors to the model** rather than exiting. The model can often
+  correct itself; the run cannot.
+
+Confirm the upstream supports tool calling before building on it. The gateway
+proxies `/v1/responses`, and whether `function_call` comes back is a property of
+the model behind it, not of the framework.
+
+## A new protocol: also a bridge
+
+DSH speaks ACP, a long-lived JSON-RPC session, so a one-shot command cannot
+express it. `docker/dsh-agent/acp-runner.mjs` performs the handshake and drives
+one turn.
+
+## What the framework provides
 
 | Placeholder | Becomes |
 | --- | --- |
-| `${MODEL}` | the chosen model id |
-| `${MODEL_PROVIDER}` | the provider profile id |
-| `${REASONING_EFFORT}` | the chosen reasoning level |
+| `${TASK_PROMPT}` | path to the prompt file — never the text |
+| `${MODEL}`, `${MODEL_PROVIDER}` | the resolved model and provider |
+| `${REASONING_EFFORT}` | the resolved reasoning level |
 | `${WORKDIR}` | the profile's `workdir` |
 | `${MCP_CONFIG}` | path to the rendered MCP server config |
-| `${TASK_PROMPT}` | path to the prompt file |
 | `${TASK_ID}`, `${RUN_ID}` | the run's identifiers |
 
-`${MCP_CONFIG}` is a JSON file in the shape Codex uses. An Agent with a
-different MCP config format needs a small renderer — that is a real integration
-cost, not a profile.
-
-### `writable_paths` — anywhere the Agent writes
-
-The container runs with a read-only root. Every path an Agent writes to must be
-listed, or the write fails inside the container with a permission error that
-looks like an Agent bug. `/workspace` is writable already; add the Agent's home
-and cache directories.
-
-## What still needs code
-
-| Situation | Why | Cost |
-| --- | --- | --- |
-| The Agent needs a **long-lived protocol** (JSON-RPC, ACP, websocket) | A one-shot command cannot express a handshake | A bridge script, like `docker/dsh-agent/acp-runner.mjs` |
-| The Agent's **MCP config format** differs | The framework renders Codex's shape | A small renderer |
-| The Agent's **output needs parsing** for trace/process scoring | Normalized events come from the Agent's log | A parser, like `adapters/codex_events.py` |
-
-Everything else is YAML.
-
-## Why `adapter` still exists
-
-`adapter` selects behaviour on the **Inspect solver** path, which runs an Agent
-in-process (`src/ai_native_evals/solvers/agent.py`). The Docker path — the one
-the Console and `run execute` use — does not consult it.
-
-For a single-command Agent in Docker, set `adapter` to an existing id whose
-event parsing is closest, so the trace is still normalized. `codex` is the safe
-default: its parser reads a line-delimited JSON stream and passes anything it
-does not recognise through untouched.
+`${MCP_CONFIG}` is Codex's JSON shape. An Agent with a different MCP config
+format needs a small renderer — a real cost, not a profile field.
 
 ## Checklist
 
-1. `profiles/agents/<id>.yaml` — the profile
-2. `docker/<id>/Dockerfile` — installs the CLI, tags by version
-3. Build the image, tagged `<repository>:<version>`
-4. `pwsh -File tools/eval.ps1 check -Task <task>` — resolves and preflights
-5. Environment page → **静态检查** then **真实测试** — proves the container
-   starts and the Agent answers
+1. Decide which of the three kinds the Agent is. This determines everything else.
+2. `profiles/agents/<id>.yaml`
+3. `docker/<id>/Dockerfile`, tagged `<repository>:<version>`
+4. Build it
+5. `pwsh -File tools/eval.ps1 check -Task <task-id>`
+6. Environment page → **静态检查** → **真实测试**
+7. Run a real Task. Answering a question and completing a task are different
+   abilities, and only the second one is graded.

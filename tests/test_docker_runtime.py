@@ -34,6 +34,23 @@ def _manifest(run_dir: Path) -> dict[str, object]:
             "run_id": "sample-task-abc123",
             "task_id": "sample-task",
             "task_prompt": "Create a cube through Blender MCP.",
+            # A resolved run always carries its profile; the runtime refuses a
+            # manifest without one, because every container decision reads it.
+            "agent_profile": {
+                "id": "codex",
+                "adapter": "codex",
+                "image": "test-agent",
+                "protocol": "responses",
+                "workdir": "/workspace/game-engine",
+                "writable_paths": ["/opt/codex-home"],
+                "capabilities": ["filesystem"],
+                "options": {},
+                "environment": {},
+                "command": [],
+                "entrypoint": None,
+                "system_prompt": None,
+                "trace_parser": "codex",
+            },
             "agent_image": "test-agent",
             "model": "deepseek/deepseek-v4-flash",
             "protocol": "responses",

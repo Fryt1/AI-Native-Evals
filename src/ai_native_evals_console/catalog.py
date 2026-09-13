@@ -37,6 +37,27 @@ _ACTIVE_STATUSES = frozenset({"starting", "preparing", "running", "evaluating"})
 #: The SQL spelling of :data:`_ACTIVE_STATUSES`, so the two stay in step.
 _ACTIVE_SQL = "status IN ('starting', 'preparing', 'running', 'evaluating')"
 
+
+def _runs_columns(schema: str) -> tuple[str, ...]:
+    """The `runs` column list, read from the schema that creates it.
+
+    Derived rather than written twice: a hand-kept copy is exactly what drifts
+    when a column is added, and the symptom is an insert failing at runtime.
+    """
+    import re
+
+    body = schema.split("CREATE TABLE IF NOT EXISTS runs (", 1)[1].split(");", 1)[0]
+    columns = []
+    for line in body.splitlines():
+        text = line.strip().rstrip(",")
+        if not text or text.startswith(("PRIMARY KEY", "UNIQUE", "FOREIGN KEY")):
+            continue
+        name = text.split()[0]
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+            columns.append(name)
+    return tuple(columns)
+
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
     run_id TEXT PRIMARY KEY,
@@ -55,7 +76,6 @@ CREATE TABLE IF NOT EXISTS runs (
     failed_check_count INTEGER NOT NULL DEFAULT 0,
     error_count INTEGER NOT NULL DEFAULT 0,
     artifact_count INTEGER NOT NULL DEFAULT 0,
-    is_legacy INTEGER NOT NULL DEFAULT 1,
     source_mtime_ns INTEGER NOT NULL DEFAULT 0,
     payload_json TEXT NOT NULL
 );
@@ -78,6 +98,9 @@ CREATE TABLE IF NOT EXISTS index_state (
 );
 """
 
+#: The columns `runs` must have, taken from the statement that creates it.
+_RUN_COLUMNS = _runs_columns(SCHEMA)
+
 
 class Catalog:
     """Small local read index; raw Run directories remain the source of truth."""
@@ -97,8 +120,35 @@ class Catalog:
         return connection
 
     def _init_db(self) -> None:
+        """Create the index, replacing it when it was built by an older schema.
+
+        The catalog is a rebuildable projection of EvalRuns, which stay the
+        source of truth, so a schema change drops it rather than migrating:
+        `CREATE TABLE IF NOT EXISTS` would silently leave the old shape in
+        place, and every insert would then fail on a column count that no
+        longer matches. Rebuilding costs one scan.
+        """
         with self._connect() as connection:
+            existing = connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='runs'"
+            ).fetchone()
+            if existing is not None and not self._schema_matches(connection):
+                connection.executescript(
+                    "DROP TABLE IF EXISTS runs;"
+                    "DROP TABLE IF EXISTS comparisons;"
+                    "DROP TABLE IF EXISTS index_state;"
+                )
             connection.executescript(SCHEMA)
+
+    @staticmethod
+    def _schema_matches(connection: sqlite3.Connection) -> bool:
+        """Whether the stored `runs` table has the columns this code expects."""
+        expected = _RUN_COLUMNS
+        actual = tuple(
+            str(row["name"])
+            for row in connection.execute("PRAGMA table_info(runs)").fetchall()
+        )
+        return actual == expected
 
     def reindex(self) -> dict[str, int]:
         self._init_db()
@@ -179,7 +229,6 @@ class Catalog:
                         "failed_check_count": failed,
                         "error_count": errors,
                         "artifact_count": len(read_artifacts(run_dir)),
-                        "is_legacy": not bool(manifest.get("schema_version")),
                         "run_dir": str(run_dir),
                     }
                     values = (
@@ -199,13 +248,12 @@ class Catalog:
                         payload["failed_check_count"],
                         payload["error_count"],
                         payload["artifact_count"],
-                        1 if payload["is_legacy"] else 0,
                         mtime,
                         json.dumps(payload, ensure_ascii=False),
                     )
                     run_upsert_sql = (
                         "INSERT INTO runs VALUES ("
-                        "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                        "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                         "ON CONFLICT(run_id) DO UPDATE SET "
                         "run_dir=excluded.run_dir, task_id=excluded.task_id, "
                         "agent_id=excluded.agent_id, model=excluded.model, "
@@ -217,7 +265,7 @@ class Catalog:
                         "duration_ms=excluded.duration_ms, "
                         "failed_check_count=excluded.failed_check_count, "
                         "error_count=excluded.error_count, artifact_count=excluded.artifact_count, "
-                        "is_legacy=excluded.is_legacy, source_mtime_ns=excluded.source_mtime_ns, "
+                        "source_mtime_ns=excluded.source_mtime_ns, "
                         "payload_json=excluded.payload_json"
                     )
                     connection.execute(run_upsert_sql, values)
@@ -292,7 +340,6 @@ class Catalog:
     @staticmethod
     def _summary(row: sqlite3.Row, *, include_internal: bool = False) -> dict[str, Any]:
         value = json.loads(row["payload_json"])
-        value["is_legacy"] = bool(value.get("is_legacy"))
         if not include_internal:
             value.pop("run_dir", None)
         return value

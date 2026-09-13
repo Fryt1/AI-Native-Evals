@@ -488,8 +488,7 @@ def _agent_args(
         args += ["--entrypoint", "sh", image, "-c", f"{executable} --version"]
     elif profile.command:
         # The profile's own command is replayed, so the probe exercises the same
-        # contract the run will. `prompt_delivery` is what the profile declares,
-        # not a decision this probe makes.
+        # contract the run will.
         if profile.entrypoint:
             args += ["--entrypoint", profile.entrypoint]
         args += [image]

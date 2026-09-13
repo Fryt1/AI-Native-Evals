@@ -34,12 +34,17 @@ class AgentProfile:
 
     @classmethod
     def from_mapping(cls, profile_id: str, value: Mapping[str, Any]) -> AgentProfile:
-        """Validate and materialize a profile mapping."""
+        """Validate and materialize a profile mapping.
+
+        Only `image` is genuinely required. `adapter` is optional because the
+        Docker path -- the one `run execute` and the Console use -- starts a
+        container from the profile's `entrypoint` and `command` and never
+        consults it; it selects the in-process Inspect implementation, which
+        most command-line Agents do not use.
+        """
         if not profile_id.strip():
             raise AgentProfileError("agent profile id must be non-empty")
-        adapter = _string(value, "adapter", "")
-        if not adapter:
-            raise AgentProfileError(f"agent profile {profile_id!r} requires adapter")
+        adapter = _string(value, "adapter", "") or "generic"
         # `agent_version` plus `image_repository` is the preferred spelling: the
         # tag is then derived from the version, so the two cannot drift. A bare
         # `image` is still accepted for profiles that name no version.
@@ -122,23 +127,6 @@ class AgentProfile:
             return declared.strip()
         return self.adapter or "generic"
 
-    @property
-    def prompt_delivery(self) -> str:
-        """How the Task prompt reaches the Agent.
-
-        Derived from what the profile declares, so a verification probe cannot
-        disagree with a real run: both ask this property rather than each
-        deciding for itself. An earlier probe passed the prompt in argv while
-        every real run mounted it as a file, so any Agent reading the file was
-        reported broken by the probe while working perfectly.
-        """
-        for item in self.command:
-            if "${TASK_PROMPT}" in item or "TASK_PROMPT" in item:
-                return "argv"
-        if any("<" in item and "TASK_PROMPT" in item for item in self.command):
-            return "stdin"
-        return "file"
-
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-safe immutable profile snapshot."""
         return {
@@ -155,10 +143,9 @@ class AgentProfile:
             "capabilities": list(self.capabilities),
             "options": dict(self.options),
             "agent_version": self.agent_version,
-            # Reported so a reader does not have to re-derive either, which is
-            # how the two consumers of this profile drifted apart before.
+            # Reported so a reader does not re-derive it; deriving the parser
+            # separately in each consumer is how two of them drifted apart.
             "trace_parser": self.trace_parser,
-            "prompt_delivery": self.prompt_delivery,
         }
 
 

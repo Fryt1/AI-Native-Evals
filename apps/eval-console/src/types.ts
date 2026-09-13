@@ -14,7 +14,6 @@ export type RunSummary = {
   failed_check_count?: number;
   error_count?: number;
   artifact_count?: number;
-  is_legacy?: boolean;
   run_dir?: string;
 };
 

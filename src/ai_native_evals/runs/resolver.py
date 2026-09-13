@@ -111,24 +111,12 @@ def resolve_run(
     config = load_config(config_path)
     defaults = _mapping(config, "defaults")
     paths = _mapping(config, "paths")
-    profiles_config = _mapping(config, "profiles")
-    agents = _merge_named_profile_source(
-        repo_root,
-        config,
-        "agents",
-        {**_mapping(profiles_config, "agents"), **_mapping(config, "agents")},
-    )
-    model_profiles = _merge_named_profile_source(
-        repo_root,
-        config,
-        "model_profiles",
-        {**_mapping(profiles_config, "models"), **_mapping(config, "model_profiles")},
-    )
+    agents = _merge_named_profile_source(repo_root, config, "agents")
+    model_profiles = _merge_named_profile_source(repo_root, config, "model_profiles")
     mcp_profiles = _merge_named_profile_source(
         repo_root,
         config,
         "mcp_profiles",
-        {**_mapping(profiles_config, "mcp"), **_mapping(config, "mcp_profiles")},
         profile_root_key="mcp",
         default_root="profiles/mcp",
     )
@@ -136,7 +124,6 @@ def resolve_run(
         repo_root,
         config,
         "sandbox_profiles",
-        {**_mapping(profiles_config, "sandboxes"), **_mapping(config, "sandbox_profiles")},
         profile_root_key="sandboxes",
         default_root="profiles/sandboxes",
     )
@@ -144,7 +131,6 @@ def resolve_run(
         repo_root,
         config,
         "presets",
-        {**_mapping(profiles_config, "presets"), **_mapping(config, "presets")},
         profile_root_key="presets",
         default_root="config/presets",
     )
@@ -182,16 +168,16 @@ def resolve_run(
         "codex",
         preset_name is not None,
     )
-    # The project-level provider default is a starting point for the
-    # model-picking flow, not an override. An explicit binding, or a
-    # `model_provider` naming something that is not a provider profile, already
-    # states the whole route and must not be hijacked by that default.
-    legacy_route = model_profile is not None or (
+    # A model_profile names a complete model binding, and a `model_provider`
+    # that is not a registered provider profile states the route directly. In
+    # both cases the whole choice has been made, so the project-level provider
+    # default must not be layered on top of it.
+    route_is_complete = model_profile is not None or (
         model_provider is not None and model_provider not in provider_profiles
     )
     provider_name = (
         ""
-        if provider is None and legacy_route
+        if provider is None and route_is_complete
         else _select_name(
             provider,
             "provider",
@@ -559,12 +545,11 @@ def _merge_named_profile_source(
     repo_root: Path,
     config: Mapping[str, Any],
     inline_key: str,
-    root_value: Mapping[str, Any],
     *,
     profile_root_key: str | None = None,
     default_root: str | None = None,
 ) -> dict[str, Any]:
-    """Load external profile files and overlay inline legacy definitions."""
+    """Load profile files from the configured root directory."""
     merged: dict[str, Any] = {}
     profile_roots = _mapping(config, "profile_roots")
     root_key = profile_root_key or inline_key
@@ -582,10 +567,6 @@ def _merge_named_profile_source(
                 raise EvalConfigError(f"profile file must contain a mapping: {path}")
             profile_id = payload.get("id", path.stem)
             merged[str(profile_id)] = dict(payload)
-    for key, value in root_value.items():
-        if isinstance(value, Mapping):
-            current = merged.get(str(key), {})
-            merged[str(key)] = {**current, **dict(value)}
     return merged
 
 

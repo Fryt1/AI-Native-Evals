@@ -129,9 +129,6 @@ def prepare_run(
         "images": _image_identities(spec),
         "snapshots": {
             "resources": {key: value.to_dict() for key, value in resource_snapshots.items()},
-            # Compatibility projections for the old verifier/report vocabulary.
-            "game_engine": _legacy_snapshot(resource_snapshots.get("game-engine")),
-            "ai_native_dsh": _legacy_snapshot(resource_snapshots.get("dsh")),
         },
         "paths": paths,
     }
@@ -213,14 +210,6 @@ def _render_task_prompt(prompt: str, *, run_id: str, workspace_dir: Path) -> str
         .replace("${HOST_WORKSPACE}", str(workspace_dir))
         .replace("${HOST_WORKSPACE_POSIX}", workspace_dir.as_posix())
     )
-
-
-def _legacy_snapshot(snapshot: Any) -> dict[str, Any] | None:
-    if snapshot is None:
-        return None
-    value = snapshot.to_dict()
-    value.update(snapshot.snapshot)
-    return value
 
 
 def _with_ref(specs: tuple[Any, ...], resource_id: str, ref: str) -> tuple[Any, ...]:
