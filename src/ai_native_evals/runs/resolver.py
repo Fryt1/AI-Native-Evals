@@ -87,6 +87,7 @@ def resolve_run(
     *,
     config_path: Path | None = None,
     agent: str | None = None,
+    agent_version: str | None = None,
     model_profile: str | None = None,
     model_provider: str | None = None,
     model: str | None = None,
@@ -309,6 +310,10 @@ def resolve_run(
         }
     try:
         agent_profile = AgentProfile.from_mapping(agent_name, agent_config)
+        if agent_version:
+            # One Agent, several versions: the profile says which is the
+            # default, an explicit choice re-points the image at another build.
+            agent_profile = agent_profile.with_version(agent_version)
     except ValueError as exc:
         raise EvalConfigError(str(exc)) from exc
     try:
@@ -437,6 +442,7 @@ def resolve_run(
         evaluator_agent=evaluator_agent_name,
         evaluator_agent_profile=evaluator_agent_profile,
         resource_specs=resource_specs,
+        source_roots=source_roots,
         task_bundle=task_bundle.to_dict(),
         preset=preset_name,
         provider=provider_name or None,

@@ -118,6 +118,10 @@ function AgentsSection({ agents }: { agents: RegistryEntry[] }) {
   const [results, setResults] = useState<Record<string, AgentCheckResult>>({});
   const [running, setRunning] = useState<Record<string, "static" | "smoke">>({});
   const [error, setError] = useState<string | null>(null);
+  // Which version each Agent row is pointed at. Two versions of one Agent
+  // behave differently, so the choice is per Agent and kept independently of
+  // the verdict: switching versions does not carry the previous verdict over.
+  const [chosen, setChosen] = useState<Record<string, string>>({});
 
   // Pick up verdicts from earlier in this session so a reload does not lose them.
   useEffect(() => {
@@ -128,12 +132,29 @@ function AgentsSection({ agents }: { agents: RegistryEntry[] }) {
     return () => { cancelled = true; };
   }, []);
 
-  const verify = useCallback(async (agent: string, level: "static" | "smoke") => {
+  const versionOf = (entry: RegistryEntry) =>
+    chosen[entry.id] || entry.agent_version || (entry.available_versions || [])[0] || "";
+
+  const setVersion = (agentId: string, version: string) => {
+    setChosen((current) => ({ ...current, [agentId]: version }));
+    // The previous verdict described a different build, so it is dropped rather
+    // than left on screen as if it still applied.
+    setResults((current) => {
+      const next = { ...current };
+      delete next[agentId];
+      return next;
+    });
+  };
+
+  // Results are keyed by Agent and version, because one Agent now has several.
+  const resultKey = (agentId: string, version: string) => (version ? `${agentId}@${version}` : agentId);
+
+  const verify = useCallback(async (agent: string, version: string, level: "static" | "smoke") => {
     setRunning((current) => ({ ...current, [agent]: level }));
     setError(null);
     try {
-      const result = await awaitAgentCheck(agent, level);
-      setResults((current) => ({ ...current, [agent]: result }));
+      const result = await awaitAgentCheck(agent, level, { version });
+      setResults((current) => ({ ...current, [resultKey(agent, version)]: result }));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -169,24 +190,56 @@ function AgentsSection({ agents }: { agents: RegistryEntry[] }) {
       {error && <div className="launch-error"><Icon name="alert" size={16} /><span>{error}</span></div>}
       <div className="agent-check-list">
         {agents.map((entry) => {
-          const result = results[entry.id];
+          const versions = entry.available_versions || [];
+          const version = versionOf(entry);
+          const result = results[resultKey(entry.id, version)];
           const level = running[entry.id];
           const report = result?.report ?? null;
           const state = level ? "running" : report ? (report.usable ? "usable" : "broken") : "unknown";
+          // What was actually verified, in the row header. Without it every row
+          // looked alike, and the operator could not tell a checked Agent from
+          // an untouched one without reading the whole panel.
+          const badge = level
+            ? { text: level === "smoke" ? "测试中…" : "检查中…", tone: "running" }
+            : report
+              ? report.level === "smoke"
+                ? { text: report.usable ? "真实测试通过" : "真实测试未通过", tone: report.usable ? "ok" : "bad" }
+                : { text: report.usable ? "仅静态检查通过" : "静态检查未通过", tone: report.usable ? "partial" : "bad" }
+              : { text: "未验证", tone: "none" };
           return (
             <div className={`agent-check-row ${state}`} key={entry.id}>
               <div className="agent-check-head">
-                <div>
+                <div className="agent-check-title">
                   <strong>{entry.label || entry.id}</strong>
-                  <code>{entry.id}</code>
+                  {/* A version is a choice, not a label: the same Agent at two
+                      versions behaves differently, and comparing them is the
+                      point of building both. Shown as a picker when there is
+                      something to pick, and as plain text when there is not. */}
+                  {versions.length > 1 ? (
+                    <select
+                      className="agent-version-select"
+                      value={version}
+                      disabled={Boolean(level)}
+                      onChange={(event) => setVersion(entry.id, event.target.value)}
+                      aria-label={`${entry.label || entry.id} 版本`}
+                    >
+                      {versions.map((item: string) => (
+                        <option key={item} value={item}>{item}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    version && <code className="agent-version">v{version}</code>
+                  )}
+                  {versions.length === 1 && <span className="agent-version-note">仅此一版已构建</span>}
+                  <span className={`agent-badge ${badge.tone}`}>{badge.text}</span>
                 </div>
                 <div className="agent-check-actions">
                   <button className="button small" disabled={Boolean(level)}
-                    onClick={() => verify(entry.id, "static")}>
+                    onClick={() => verify(entry.id, version, "static")}>
                     {level === "static" ? "检查中…" : "静态检查"}
                   </button>
                   <button className="button small primary" disabled={Boolean(level)}
-                    onClick={() => verify(entry.id, "smoke")}>
+                    onClick={() => verify(entry.id, version, "smoke")}>
                     {level === "smoke" ? "测试中…" : "真实测试"}
                   </button>
                 </div>
@@ -251,7 +304,7 @@ const AGENT_CHECK_LABELS: Record<string, string> = {
   profile: "Profile 文件",
   adapter: "Adapter",
   image: "镜像",
-  capabilities: "声明能力",
+  version: "版本",
   credentials: "上游凭据",
   container: "容器启动",
   exit: "退出码",

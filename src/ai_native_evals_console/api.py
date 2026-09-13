@@ -95,10 +95,13 @@ class PreflightRequest(BaseModel):
 
 
 class AgentCheckRequest(BaseModel):
-    """How deeply to verify one Agent profile."""
+    """How deeply to verify one Agent profile, and which build of it."""
 
     #: `static` inspects the profile and image; `smoke` starts a real container.
     level: str = Field(default="static", max_length=16)
+    #: Verify this build instead of the profile's declared default, so one Agent
+    #: can be checked at several versions.
+    version: str = Field(default="", max_length=120)
 
 
 def _sanitize_artifact_text(content: str, runs_root: Path, artifact_path: Path) -> str:
@@ -260,7 +263,7 @@ def create_app(
         """Verify one Agent. `smoke` starts a real container and asks it a question."""
         if request.level not in {"static", "smoke"}:
             raise HTTPException(status_code=422, detail="level must be static or smoke")
-        return checks.start_agent(agent_id, level=request.level)
+        return checks.start_agent(agent_id, level=request.level, version=request.version)
 
     @app.get("/api/v1/agents/checks/{check_id}")
     def get_agent_check(check_id: str) -> dict[str, Any]:

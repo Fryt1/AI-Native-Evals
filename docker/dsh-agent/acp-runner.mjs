@@ -10,7 +10,7 @@
 
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 
 const prompt = process.argv.slice(2).join(" ");
 if (!prompt) throw new Error("DSH ACP runner requires a task prompt");
@@ -125,6 +125,28 @@ function answerPermission(message) {
   })}\n`);
 }
 
+function readAttachments() {
+  // Files the evaluator delivered into the mounted configuration. This is the
+  // DSH side of the contract: the framework says only "here is a directory",
+  // and deciding that its contents are Cordis plugins is DSH's business, not
+  // the evaluator's. A directory without a readable manifest is not a plugin;
+  // skipping it keeps one malformed copy from failing the whole run.
+  const root = process.env.EVAL_ATTACH_DIR || "/run-config/attach";
+  if (!existsSync(root)) return [];
+  const entries = [];
+  for (const name of readdirSync(root)) {
+    const dir = `${root}/${name}`;
+    try {
+      const manifest = JSON.parse(readFileSync(`${dir}/package.json`, "utf8"));
+      const entry = manifest.exports?.["."]?.default || manifest.main;
+      if (typeof entry === "string" && entry) entries.push({ name, path: `${dir}/${entry}` });
+    } catch (error) {
+      process.stderr.write(`ignoring attachment ${name}: ${error.message}\n`);
+    }
+  }
+  return entries;
+}
+
 function configureDshHome() {
   const home = process.env.DSH_HOME || "/tmp/dsh-home";
   const model = process.env.EVAL_DSH_MODEL_ID || process.env.EVAL_MODEL || "deepseek-v4-flash";
@@ -146,9 +168,23 @@ function configureDshHome() {
   const systemLayer = systemPrompt
     ? `- id: system-prompt\n  config:\n    persona: ${JSON.stringify(systemPrompt)}\n`
     : "";
+  // The profile's user patch layer; the launcher loads this file itself, so an
+  // attachment joins the composition without an image rebuild.
+  const attachments = readAttachments();
+  const attachLayer = attachments.length
+    ? `- insert:\n${attachments
+        .map(
+          (item) =>
+            `    - id: ${JSON.stringify(item.name)}\n      name: ${JSON.stringify(item.path)}\n`,
+        )
+        .join("")}`
+    : "";
+  if (attachments.length) {
+    process.stderr.write(`composing ${attachments.length} attachment(s) from the run config\n`);
+  }
   writeFileSync(
     `${home}/cordis.patch.yml`,
-    `${systemLayer}- id: acp\n  config:\n    provider: deepseek-official\n    model: ${JSON.stringify(model)}\n`,
+    `${systemLayer}- id: acp\n  config:\n    provider: deepseek-official\n    model: ${JSON.stringify(model)}\n${attachLayer}`,
     "utf8",
   );
 }

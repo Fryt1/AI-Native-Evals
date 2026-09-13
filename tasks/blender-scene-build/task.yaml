@@ -5,11 +5,9 @@ prompt_file: prompt.md
 # a Task with no resources must not create a snapshot.
 resources: []
 execution:
-  # `codex-blender` works in /workspace and declares only Blender. `codex-dcc`
-  # would also work, but its workdir is a project mount this Task does not
-  # create, and its usual MCP profile adds unreal-mcp -- a UE5 dependency for a
-  # task that never touches UE5.
-  agent: codex-blender
+  # Blender only: the MCP profile is what grants host capabilities, so this Task
+  # never depends on a UE5 editor being open.
+  agent: codex
   mcp_profile: blender-host
 test_plan:
   version: 1

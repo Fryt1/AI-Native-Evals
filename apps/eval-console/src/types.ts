@@ -250,9 +250,17 @@ export type AgentCheckResult = {
 export async function awaitAgentCheck(
   agent: string,
   level: "static" | "smoke",
-  { timeoutMs = 240_000, intervalMs = 900 }: { timeoutMs?: number; intervalMs?: number } = {},
+  {
+    version = "",
+    timeoutMs = 240_000,
+    intervalMs = 900,
+  }: { version?: string; timeoutMs?: number; intervalMs?: number } = {},
 ): Promise<AgentCheckResult> {
-  let run = await postJson<AgentCheckResult>(`/agents/${encodeURIComponent(agent)}/check`, { level });
+  const body: Record<string, string> = { level };
+  // A version runs that build rather than the profile's default, so the verdict
+  // describes a specific one.
+  if (version) body.version = version;
+  let run = await postJson<AgentCheckResult>(`/agents/${encodeURIComponent(agent)}/check`, body);
   const deadline = Date.now() + timeoutMs;
   while (run.status === "running") {
     if (Date.now() > deadline) {
@@ -289,7 +297,7 @@ export async function awaitPreflight(
   return run;
 }
 
-export type RegistryEntry = { id: string; kind: string; path: string; label?: string; summary?: string; fields?: string[]; checks?: number; provider_id?: string; model_id?: string; capabilities?: string[]; workdir?: string; model_ids?: string[]; model_profiles?: string[]; execution?: Record<string, string> };
+export type RegistryEntry = { id: string; kind: string; path: string; label?: string; summary?: string; fields?: string[]; checks?: number; provider_id?: string; model_id?: string; workdir?: string; model_ids?: string[]; model_profiles?: string[]; execution?: Record<string, string>; agent_version?: string; image?: string; available_versions?: string[] };
 export type RegistryKey = "tasks" | "agents" | "providers" | "models" | "mcp" | "sandboxes" | "presets";
 export type Registry = Record<RegistryKey, RegistryEntry[]> & { defaults?: Record<string, string> };
 

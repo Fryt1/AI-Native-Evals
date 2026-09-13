@@ -51,6 +51,7 @@ class _AgentCheckRecord:
     level: str
     status: str
     created_at: str
+    version: str = ""
     started_at: str | None = None
     finished_at: str | None = None
     report: dict[str, Any] | None = None
@@ -105,8 +106,13 @@ class PreflightManager:
             records = sorted(self._records.values(), key=lambda r: r.created_at)
         return self._view(records[-1]) if records else None
 
-    def start_agent(self, agent: str, *, level: str = "static") -> dict[str, Any]:
+    def start_agent(
+        self, agent: str, *, level: str = "static", version: str = ""
+    ) -> dict[str, Any]:
         """Verify one Agent, statically or with a real container probe.
+
+        `version` checks a specific build of the Agent instead of the profile's
+        declared default, so one Agent can be verified at each version.
 
         Always a fresh run: the whole point is to answer "does this work right
         now", and a cached verdict from before a rebuild would be worse than no
@@ -116,6 +122,7 @@ class PreflightManager:
             check_id=f"agent-{uuid4().hex[:12]}",
             agent=agent,
             level=level,
+            version=version,
             status="running",
             created_at=datetime.now(UTC).isoformat(),
             started_at=datetime.now(UTC).isoformat(),
@@ -123,7 +130,9 @@ class PreflightManager:
         with self._lock:
             self._agent_records[record.check_id] = record
             self._prune_agents_locked()
-            record.future = self._executor.submit(self._run_agent, record.check_id, agent, level)
+            record.future = self._executor.submit(
+                self._run_agent, record.check_id, agent, level, version
+            )
         return self._agent_view(record)
 
     def get_agent(self, check_id: str) -> dict[str, Any] | None:
@@ -132,32 +141,38 @@ class PreflightManager:
         return self._agent_view(record) if record else None
 
     def agent_results(self) -> dict[str, Any]:
-        """The most recent verdict per Agent, for the page's initial render."""
+        """The most recent verdict per Agent and version.
+
+        Keyed by both, because one Agent now has several builds and each keeps
+        its own verdict; keying by Agent alone would let the newer result
+        silently replace the older one.
+        """
         with self._lock:
             latest: dict[str, _AgentCheckRecord] = {}
             for record in sorted(self._agent_records.values(), key=lambda r: r.created_at):
-                latest[record.agent] = record
-        return {agent: self._agent_view(record) for agent, record in latest.items()}
+                key = f"{record.agent}@{record.version}" if record.version else record.agent
+                latest[key] = record
+        return {key: self._agent_view(record) for key, record in latest.items()}
 
-    def _run_agent(self, check_id: str, agent: str, level: str) -> None:
+    def _run_agent(self, check_id: str, agent: str, level: str, version: str = "") -> None:
         try:
-            report = self._verify_agent(agent, level)
+            report = self._verify_agent(agent, level, version)
         except Exception as exc:  # noqa: BLE001 - a probe crash is a finding, not a 500
             self._finish_agent(check_id, status="error", error=f"{type(exc).__name__}: {exc}")
             return
         self._finish_agent(check_id, status="completed", report=report.to_dict())
 
-    def _verify_agent(self, agent: str, level: str) -> Any:
+    def _verify_agent(self, agent: str, level: str, version: str = "") -> Any:
         from ai_native_evals.runs.agent_check import check_static, smoke_test_agent
 
         if level != "smoke":
-            return check_static(self.repo_root, agent)
+            return check_static(self.repo_root, agent, version=version)
 
         # A smoke run needs a real model and real credentials; both come from the
         # selection a run would make, resolved here so the probe matches it.
         model, env_file = self._smoke_targets()
         if not model or env_file is None:
-            report = check_static(self.repo_root, agent)
+            report = check_static(self.repo_root, agent, version=version)
             report.add(
                 _smoke_unavailable(
                     "没有可用的模型或凭据，无法进行真实启动测试"
@@ -167,7 +182,7 @@ class PreflightManager:
             )
             return report
         return smoke_test_agent(
-            self.repo_root, agent, model=model, provider_env_file=env_file
+            self.repo_root, agent, model=model, provider_env_file=env_file, version=version
         )
 
     def _smoke_targets(self) -> tuple[str, Path | None]:

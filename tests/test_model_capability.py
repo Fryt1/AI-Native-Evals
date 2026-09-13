@@ -74,27 +74,35 @@ def _profile(tmp_path: Path, name: str, payload: dict) -> Path:
     return root
 
 
-def test_agent_label_and_capabilities_reach_the_console(tmp_path: Path) -> None:
-    """A picker showing a bare `codex-dcc` tells the operator nothing."""
+def test_agent_label_and_version_reach_the_console(tmp_path: Path) -> None:
+    """A picker showing a bare profile id tells the operator nothing.
+
+    Host capabilities are deliberately absent: they belong to the run's MCP
+    profile, and declaring them on the Agent as well is how the two came to
+    disagree.
+    """
     root = _profile(
         tmp_path,
-        "codex-dcc",
+        "codex",
         {
-            "id": "codex-dcc",
-            "label": "Codex（含 Blender / UE5）",
-            "description": "可通过 MCP 操作宿主机 DCC。",
+            "id": "codex",
+            "label": "Codex",
+            "description": "OpenAI 的编码 Agent。",
             "adapter": "codex",
-            "workdir": "/workspace/game-engine",
-            "capabilities": ["filesystem", "shell", "mcp", "blender", "ue5"],
+            "image_repository": "ai-native-codex-agent",
+            "agent_version": "0.153.4",
+            "workdir": "/workspace",
         },
     )
 
     entry = _list_yaml_profiles(root, "agent")[0]
 
-    assert entry["label"] == "Codex（含 Blender / UE5）"
-    assert entry["summary"] == "可通过 MCP 操作宿主机 DCC。"
-    assert entry["capabilities"] == ["filesystem", "shell", "mcp", "blender", "ue5"]
-    assert entry["workdir"] == "/workspace/game-engine"
+    assert entry["label"] == "Codex"
+    assert entry["summary"] == "OpenAI 的编码 Agent。"
+    assert entry["agent_version"] == "0.153.4"
+    assert entry["image"] == "ai-native-codex-agent:0.153.4"
+    assert entry["workdir"] == "/workspace"
+    assert "capabilities" not in entry
 
 
 def test_a_profile_without_a_label_falls_back_to_its_id(tmp_path: Path) -> None:
@@ -107,12 +115,14 @@ def test_a_profile_without_a_label_falls_back_to_its_id(tmp_path: Path) -> None:
     assert entry["summary"] == "codex"
 
 
-def test_agent_entry_survives_a_missing_capabilities_key(tmp_path: Path) -> None:
+def test_agent_entry_survives_a_minimal_profile(tmp_path: Path) -> None:
+    """Only `image` is required, so the rest must degrade rather than fail."""
     root = _profile(tmp_path, "bare", {"id": "bare", "adapter": "codex"})
 
     entry = _list_yaml_profiles(root, "agent")[0]
 
-    assert entry["capabilities"] == []
+    assert entry["agent_version"] == ""
+    assert entry["image"] == ""
     assert entry["workdir"] == ""
 
 

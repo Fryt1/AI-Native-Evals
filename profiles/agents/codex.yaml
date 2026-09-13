@@ -1,20 +1,25 @@
 id: codex
-label: Codex（纯文件）
-description: 只做文件与命令操作，不访问宿主机 DCC。适合不需要 Blender / UE5 的测试。
+label: Codex
+description: OpenAI 的编码 Agent。工作目录在 /workspace，可用哪些宿主能力由 MCP profile 决定。
 adapter: codex
 # The tag is derived from the version, so the two cannot drift apart. Bumping
 # `agent_version` and rebuilding produces a new image beside the old one rather
 # than replacing it.
 image_repository: ai-native-codex-agent
 agent_version: 0.153.4
+# How this Agent's image is produced. The build tool reads this instead of
+# carrying a list of Agents, so a new Agent is a profile plus a Dockerfile.
+build:
+  kind: npm
+  package: "@openai/codex"
+  dockerfile: docker/codex-agent/Dockerfile
 protocol: responses
 workdir: /workspace
+# Codex writes a line-delimited JSON event stream; this parser reads it.
+trace:
+  parser: codex
 writable_paths:
   - /opt/codex-home
-capabilities:
-  - filesystem
-  - shell
-  - mcp
 options:
   executable: codex
   sandbox: workspace-write

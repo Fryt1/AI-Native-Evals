@@ -89,6 +89,9 @@ def prepare_run(
     dsh_runner_path = agent_config_dir / "dsh-acp-runner.mjs"
     if dsh_runner_source.is_file():
         shutil.copy2(dsh_runner_source, dsh_runner_path)
+    staged_attachments = _stage_attachments(
+        repo_root, agent_config_dir, spec.agent_profile.attach, spec.source_roots
+    )
 
     project_dir = resource_paths.get("game-engine")
     dsh_dir = resource_paths.get("dsh")
@@ -107,6 +110,8 @@ def prepare_run(
         "agent_profile": str(agent_profile_path),
         "evaluator_agent_profile": str(evaluator_profile_path),
         "system_prompt": str(system_prompt_path) if system_prompt_path.is_file() else None,
+        # Where attachments were staged, inside the mounted config directory.
+        "attach": [str(path) for path in staged_attachments],
         "dsh_runner": str(dsh_runner_path) if dsh_runner_path.is_file() else None,
         "resources": {key: str(value) for key, value in resource_paths.items()},
     }
@@ -200,6 +205,58 @@ def cleanup_run(run_dir: Path, runs_root: Path) -> None:
         raise RunLifecycleError(f"refusing to clean path outside runs root: {run_dir}")
     if run_dir.exists():
         shutil.rmtree(run_dir)
+
+
+def _stage_attachments(
+    repo_root: Path,
+    agent_config_dir: Path,
+    attach: tuple[str, ...],
+    source_roots: dict[str, Any] | None = None,
+) -> list[Path]:
+    """Copy declared attachments where the Agent's own startup can find them.
+
+    The framework delivers files and stops there. What an attachment *is* --
+    a plugin, a rule file, a dataset -- is the Agent's business, because only
+    the Agent knows how its own composition works. Naming this "plugins" put one
+    Agent's mechanism into the framework's vocabulary, which is exactly the
+    coupling this repository exists to avoid.
+
+    A spec is `source_id` or `source_id@subdirectory`. The id resolves through
+    `paths.source_roots`, the same place a Task's repositories resolve, so an
+    attachment keeps its own repository and this one only records where it lives.
+
+    An id that is not configured, or whose directory does not exist, is skipped
+    rather than guessed at: staging the wrong tree would surface later as the
+    Agent failing to start, which is much harder to read than a missing file.
+    """
+    if not attach:
+        return []
+    roots = source_roots or {}
+    staged: list[Path] = []
+    target_root = agent_config_dir / "attach"
+    for spec in attach:
+        source_id, _, name = spec.partition("@")
+        source_id = source_id.strip()
+        location = roots.get(source_id)
+        if not isinstance(location, str) or not location.strip():
+            continue
+        source = Path(location)
+        if not source.is_absolute():
+            source = (repo_root / source).resolve()
+        if not source.is_dir():
+            continue
+        destination = target_root / (name.strip() or source_id)
+        if destination.exists():
+            shutil.rmtree(destination, ignore_errors=True)
+        shutil.copytree(
+            source,
+            destination,
+            ignore=shutil.ignore_patterns(
+                "node_modules", ".git", "*.tsbuildinfo", "*.map", "src", "*.ts"
+            ),
+        )
+        staged.append(destination)
+    return staged
 
 
 def _render_task_prompt(prompt: str, *, run_id: str, workspace_dir: Path) -> str:

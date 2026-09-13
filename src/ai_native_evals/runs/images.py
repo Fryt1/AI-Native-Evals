@@ -159,6 +159,50 @@ def require_images(
     return statuses
 
 
+def available_versions(
+    repository: str,
+    *,
+    distro: str | None = None,
+    timeout: float = _DEFAULT_INSPECT_TIMEOUT_SECONDS,
+) -> list[str]:
+    """The tags of a repository that exist on this machine.
+
+    A version is only usable if its image was built, so the images are the
+    registry of what can actually be run -- not a list kept in a file that
+    drifts the moment someone builds or prunes one.
+
+    Returns an empty list when Docker cannot be asked, so a caller shows "no
+    other versions" rather than inventing some.
+    """
+    name = repository.strip()
+    if not name:
+        return []
+    target = wsl_distro(distro)
+    try:
+        completed = subprocess.run(
+            [
+                "wsl.exe", "-d", target, "--",
+                "docker", "images", name, "--format", "{{.Tag}}",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if completed.returncode != 0:
+        return []
+    tags = {
+        line.strip()
+        for line in (completed.stdout or "").splitlines()
+        if line.strip() and line.strip() != "<none>"
+    }
+    return sorted(tags, reverse=True)
+
+
 def missing_images(
     references: list[tuple[str, str]],
     *,

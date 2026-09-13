@@ -3,13 +3,20 @@ label: 示例 CLI Agent（含工具循环）
 description: >-
   一个能真正干活的单次命令 Agent 模板：读 prompt、循环调用模型、执行模型要求的
   文件与命令操作。复制这个 profile 与 docker/example-cli/ 即可接入新的 CLI Agent。
-# adapter 与 trace_parser 都不是必需的。
-#   adapter      —— 只影响进程内 Inspect 路径；Docker 路径不看它。
-#   trace_parser —— 不写则退化为 pass-through，仍产生事件，只是识别不出类型。
+# adapter 不是必需的 —— 只影响进程内 Inspect 路径，Docker 路径不看它。
+# trace.parser 不写则退化为 generic：仍产生事件，只是识别不出类型。
 image_repository: ai-native-example-cli
 agent_version: 1.0.0
-options:
-  trace_parser: codex
+# Built by hand from docker/example-cli/Dockerfile, which the template documents.
+# `prebuilt` says so, and the build tool leaves it alone rather than looking for
+# a package to install.
+build:
+  kind: prebuilt
+options: {}
+# The template mimics Codex's event stream, so the Codex parser reads it. An
+# Agent with its own format sets `generic` and gets pass-through events.
+trace:
+  parser: codex
 # 容器根文件系统只读。Agent 写到 /workspace 之外时必须在这里列出，
 # 否则容器内会以权限错误失败，看起来像 Agent 的 bug。
 writable_paths:

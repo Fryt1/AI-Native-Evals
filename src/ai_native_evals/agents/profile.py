@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -26,11 +26,28 @@ class AgentProfile:
     command: tuple[str, ...] = ()
     environment: dict[str, str] = field(default_factory=dict)
     writable_paths: tuple[str, ...] = ()
-    capabilities: tuple[str, ...] = ()
     options: dict[str, Any] = field(default_factory=dict)
     #: The Agent's own version, when the profile names one. Recorded in the run
     #: manifest so a result can be traced to the exact build it came from.
     agent_version: str = ""
+    #: Files placed where the Agent's own startup can find them, written as
+    #: `source_id` or `source_id@destination`. The framework delivers them and
+    #: says nothing about what they mean; the Agent reads that directory and
+    #: composes them its own way. An earlier version of this field was called
+    #: `plugins`, which put one Agent's composition mechanism into the
+    #: framework's vocabulary and could not describe an Agent that composes
+    #: differently -- or one that has no such mechanism at all.
+    attach: tuple[str, ...] = ()
+    #: How this Agent's image is produced, when the framework builds it.
+    #: Declared here so the build tool needs no list of Agents: it reads the
+    #: profile and does what the profile says. `kind` selects the recipe --
+    #: `npm` installs a published package, `source` builds a checkout identified
+    #: by commit, `prebuilt` means the image already exists.
+    build: dict[str, Any] = field(default_factory=dict)
+    #: How this Agent's log becomes normalized events: `{parser: codex}`. Its own
+    #: field rather than a derivation, because reading a log and selecting an
+    #: implementation are different questions.
+    trace: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_mapping(cls, profile_id: str, value: Mapping[str, Any]) -> AgentProfile:
@@ -82,10 +99,10 @@ class AgentProfile:
         if not isinstance(environment, Mapping):
             raise AgentProfileError(f"agent profile {profile_id!r} environment must be a mapping")
         writable_paths = value.get("writable_paths", ())
-        capabilities = value.get("capabilities", ())
+        attach = value.get("attach", ())
         for field_name, field_value in (
             ("writable_paths", writable_paths),
-            ("capabilities", capabilities),
+            ("attach", attach),
         ):
             if not isinstance(field_value, (list, tuple)) or not all(
                 isinstance(item, str) and item for item in field_value
@@ -96,6 +113,22 @@ class AgentProfile:
         options = value.get("options", {})
         if not isinstance(options, Mapping):
             raise AgentProfileError(f"agent profile {profile_id!r} options must be a mapping")
+        build = value.get("build", {})
+        if not isinstance(build, Mapping):
+            raise AgentProfileError(f"agent profile {profile_id!r} build must be a mapping")
+        build_kind = str(build.get("kind") or "").strip()
+        trace = value.get("trace", {})
+        if not isinstance(trace, Mapping):
+            raise AgentProfileError(f"agent profile {profile_id!r} trace must be a mapping")
+        if build_kind and build_kind not in {"npm", "source", "prebuilt"}:
+            raise AgentProfileError(
+                f"agent profile {profile_id!r} build.kind must be npm, source or prebuilt"
+            )
+        needs_dockerfile = build_kind and build_kind != "prebuilt"
+        if needs_dockerfile and not str(build.get("dockerfile") or "").strip():
+            raise AgentProfileError(
+                f"agent profile {profile_id!r} build of kind {build_kind!r} needs a dockerfile"
+            )
         return cls(
             profile_id=profile_id,
             adapter=adapter,
@@ -107,25 +140,58 @@ class AgentProfile:
             command=tuple(command),
             environment={str(key): str(item) for key, item in environment.items()},
             writable_paths=tuple(writable_paths),
-            capabilities=tuple(capabilities),
             options=dict(options),
             agent_version=agent_version,
+            attach=tuple(attach),
+            build={str(key): item for key, item in build.items()},
+            trace={str(key): item for key, item in trace.items()},
         )
 
     @property
     def trace_parser(self) -> str:
-        """Which trace parser reads this profile's log.
+        """Which parser turns this Agent's log into normalized events.
 
-        This used to be the bare `adapter` value, which conflated two unrelated
-        jobs: selecting the in-process implementation and selecting a log
-        parser. They are separate now, and the parser falls back to a
-        pass-through so an unknown Agent still produces usable events rather
-        than an empty Process phase.
+        Its own field rather than a derivation of `adapter`. The two answer
+        different questions -- `adapter` selects the in-process Inspect
+        implementation, this selects a log reader -- and an Agent may change one
+        without the other. Falls back to `generic`, which emits `provider_event`
+        for anything it does not recognize, so an unfamiliar Agent still
+        produces a usable Process phase rather than an empty one.
         """
-        declared = self.options.get("trace_parser")
+        declared = self.trace.get("parser") if isinstance(self.trace, Mapping) else None
         if isinstance(declared, str) and declared.strip():
             return declared.strip()
-        return self.adapter or "generic"
+        return "generic"
+
+    @property
+    def image_repository(self) -> str:
+        """The image name without its tag, or ``""`` when the image is untagged.
+
+        Kept so a profile can be re-pointed at another version: the repository
+        stays, only the tag moves.
+        """
+        name, _, tag = self.image.rpartition(":")
+        # A colon inside a registry host (`registry:5000/agent`) is not a tag.
+        if not name or "/" in tag:
+            return ""
+        return name
+
+    def with_version(self, version: str) -> AgentProfile:
+        """This profile, pinned to another version of the same Agent.
+
+        Used to run one Agent across versions. The image is derived from the
+        repository, so the tag cannot disagree with the version it claims.
+        """
+        version = version.strip()
+        if not version:
+            raise AgentProfileError("version override must be non-empty")
+        repository = self.image_repository
+        if not repository:
+            raise AgentProfileError(
+                f"agent profile {self.profile_id!r} image {self.image!r} has no "
+                "repository to pin a version against"
+            )
+        return replace(self, agent_version=version, image=f"{repository}:{version}")
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-safe immutable profile snapshot."""
@@ -140,9 +206,11 @@ class AgentProfile:
             "command": list(self.command),
             "environment": dict(self.environment),
             "writable_paths": list(self.writable_paths),
-            "capabilities": list(self.capabilities),
             "options": dict(self.options),
             "agent_version": self.agent_version,
+            "attach": list(self.attach),
+            "build": dict(self.build),
+            "trace": dict(self.trace),
             # Reported so a reader does not re-derive it; deriving the parser
             # separately in each consumer is how two of them drifted apart.
             "trace_parser": self.trace_parser,

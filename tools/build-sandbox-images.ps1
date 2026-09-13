@@ -53,8 +53,12 @@ if ($Offline) {
 }
 
 Write-Host "Ensuring local Codex package cache..."
+# An explicitly requested version wins over the recorded one. Reading the cache
+# unconditionally meant `-CodexVersion 0.154.0` built 0.153.4 and reported
+# success, so a second version could never be produced.
 $cacheVersion = Join-Path $RepoRoot "cache\codex\VERSION"
-if (Test-Path $cacheVersion) {
+$explicitCodexVersion = $PSBoundParameters.ContainsKey("CodexVersion")
+if (-not $explicitCodexVersion -and (Test-Path $cacheVersion)) {
     $CodexVersion = (Get-Content $cacheVersion -Raw).Trim()
 }
 & node (Join-Path $RepoRoot "tools\prepare-codex-cache.mjs") `
@@ -64,6 +68,14 @@ if (Test-Path $cacheVersion) {
 if ($LASTEXITCODE -ne 0) {
     throw "Codex package cache preparation failed with exit code $LASTEXITCODE"
 }
+# The cache now holds the requested version; record it so a later build without
+# the flag reproduces what was last prepared.
+#
+# Plain Set-Content, so PowerShell applies the same line-ending convention the
+# working tree uses. Writing byte-exact through .NET looked tidier and was not:
+# with `core.autocrlf=true` the checkout holds CRLF, so a byte-exact write left
+# the tracked file modified after every build.
+$CodexVersion | Set-Content -LiteralPath $cacheVersion
 
 $buildNetworkArgs = if ($Offline) { @("--network", "none") } else { @() }
 $pullArgs = @("--pull=false")
@@ -131,18 +143,30 @@ if ($IncludeDsh) {
     if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($DshCommit)) {
         throw "Could not resolve the DSH repository commit: $DshRootWindows"
     }
+    # Copying a checkout's node_modules into the build context sounds like a
+    # saving and is not one. This host's is 904 MB across 65k files, and the
+    # context crosses into WSL file by file: the build sat for over twelve
+    # minutes before the first instruction ran. Installing inside the image
+    # sends one layer instead, so node_modules stays excluded.
     $dshDockerIgnore = Join-Path $DshRootWindows ".dockerignore"
     $createdDshDockerIgnore = $false
+    # Written on every build rather than only when absent. A leftover file from
+    # an earlier run -- including one this script wrote before the exclusion
+    # list changed -- would otherwise be reused forever, and its exclusions are
+    # what decide whether the context is 35 MB or 1 GB.
+    $ignoreLines = @(
+        ".git", ".github", "node_modules", "website", "snapshots", "docs",
+        "**/tests", "**/test", "**/*.spec.ts", "**/*.test.ts",
+        "**/coverage", "**/dist", "**/lib"
+    )
+    $previousDockerIgnore = if (Test-Path -LiteralPath $dshDockerIgnore -PathType Leaf) {
+        Get-Content -LiteralPath $dshDockerIgnore -Raw
+    } else {
+        $null
+    }
+    $ignoreLines | Set-Content -LiteralPath $dshDockerIgnore -Encoding utf8
+    $createdDshDockerIgnore = $true
     try {
-        if (-not (Test-Path -LiteralPath $dshDockerIgnore -PathType Leaf)) {
-            $ignoreLines = @(
-                ".git", ".github", "node_modules", "website", "snapshots", "docs",
-                "**/tests", "**/test", "**/*.spec.ts", "**/*.test.ts",
-                "**/coverage", "**/dist", "**/lib"
-            )
-            $ignoreLines | Set-Content -LiteralPath $dshDockerIgnore -Encoding utf8
-            $createdDshDockerIgnore = $true
-        }
         # Built from source, so the identity is the commit rather than a release
         # number. A fixed `:local` tag hid which commit the image contained and
         # was overwritten by the next build.
@@ -160,8 +184,15 @@ if ($IncludeDsh) {
         Invoke-Docker $dshArgs
     }
     finally {
+        # The checkout is left as it was found: a file that existed is restored,
+        # one this script created is removed.
         if ($createdDshDockerIgnore) {
-            Remove-Item -LiteralPath $dshDockerIgnore -Force
+            if ($null -ne $previousDockerIgnore) {
+                Set-Content -LiteralPath $dshDockerIgnore -Value $previousDockerIgnore -Encoding utf8
+            }
+            else {
+                Remove-Item -LiteralPath $dshDockerIgnore -Force
+            }
         }
     }
 }

@@ -30,12 +30,20 @@ def available_adapters() -> tuple[str, ...]:
 
 
 def create_adapter(profile: AgentProfile) -> AgentAdapter:
-    """Create the concrete adapter selected by a profile."""
+    """Create the concrete adapter selected by a profile.
+
+    Raises for an adapter id nobody registered. Only the in-process Inspect path
+    calls this; the Docker path starts a container from the profile's
+    `entrypoint` and `command` and never consults `adapter`, so a profile that
+    exists only to run in Docker may leave it unset.
+    """
     _load_builtins()
     factory = _FACTORIES.get(profile.adapter)
     if factory is None:
         raise AgentRegistryError(
-            f"unknown Agent adapter {profile.adapter!r}; available={available_adapters()}"
+            f"unknown Agent adapter {profile.adapter!r}; available={available_adapters()}. "
+            "The Docker path does not use this field; it is required only for the "
+            "in-process Inspect path."
         )
     return factory(profile)
 

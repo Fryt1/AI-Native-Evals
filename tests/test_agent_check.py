@@ -162,11 +162,26 @@ def test_static_check_reads_a_real_profile() -> None:
     assert checks["image"]["status"] in {"ok", "unknown"}
 
 
-def test_static_check_reports_declared_capabilities() -> None:
-    """The capabilities are the profile's promise; they are surfaced, not hidden."""
-    checks = check_static(REPO, "codex-dcc").to_dict()["checks"]
+def test_static_check_reports_the_version() -> None:
+    """The version is what tells two builds of one Agent apart."""
+    checks = check_static(REPO, "codex").to_dict()["checks"]
 
-    assert "blender" in checks["capabilities"]["detail"]
+    assert checks["version"]["status"] == "ok"
+    assert checks["version"]["detail"]
+
+
+def test_capabilities_are_not_a_profile_field() -> None:
+    """Host capabilities come from the MCP profile, not the Agent.
+
+    Declaring them in both places is how they came to disagree: an Agent could
+    promise `blender` while its run's MCP profile granted nothing.
+    """
+    from ai_native_evals.agents.profile import AgentProfile
+
+    profile = AgentProfile.from_mapping("p", {"image": "i"})
+
+    assert not hasattr(profile, "capabilities")
+    assert "capabilities" not in profile.to_dict()
 
 
 def test_load_agent_profile_matches_on_declared_id(tmp_path: Path) -> None:

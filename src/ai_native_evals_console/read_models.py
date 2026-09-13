@@ -450,20 +450,39 @@ def _list_yaml_profiles(root: Path, kind: str) -> list[dict[str, Any]]:
             ),
         }
         if kind == "agent":
-            # The declared capabilities are what actually distinguish one Agent
-            # profile from another, so they are surfaced rather than left in the
-            # file for the operator to go and read.
-            capabilities = data.get("capabilities")
-            entry["capabilities"] = (
-                [str(item) for item in capabilities] if isinstance(capabilities, list) else []
-            )
+            # The version is what an operator comparing Agents needs, and it is
+            # the Agent's own property. Host capabilities are not repeated here:
+            # they come from the run's MCP profile, and declaring them twice is
+            # how the two came to disagree.
             entry["workdir"] = str(data.get("workdir") or "")
+            entry["agent_version"] = str(data.get("agent_version") or "")
+            entry["image"] = str(data.get("image") or "")
+            if not entry["image"]:
+                repository = str(data.get("image_repository") or "")
+                if repository and entry["agent_version"]:
+                    entry["image"] = f"{repository}:{entry['agent_version']}"
+            entry["available_versions"] = _agent_versions(entry)
         if kind == "model":
             entry["provider_id"] = str(data.get("provider") or "default")
             entry["model_id"] = str(data.get("model") or entry["id"])
             entry["label"] = entry["model_id"]
         result.append(entry)
     return result
+
+
+def _agent_versions(entry: dict[str, Any]) -> list[str]:
+    """Versions of this Agent that are built and can actually be run.
+
+    Read from the images, because a version nobody built cannot start: listing
+    it would offer a choice that fails at container start.
+    """
+    from ai_native_evals.runs.images import available_versions
+
+    image = str(entry.get("image") or "")
+    repository = image.rpartition(":")[0] if ":" in image else ""
+    if not repository or "/" in image.rpartition(":")[2]:
+        return [str(entry["agent_version"])] if entry.get("agent_version") else []
+    return available_versions(repository)
 
 
 def registry(repo_root: Path) -> dict[str, Any]:

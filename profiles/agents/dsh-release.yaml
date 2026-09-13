@@ -1,11 +1,18 @@
 id: dsh-release
-label: DSH（发布版 CLI）
-description: 用发布的 DSH CLI 驱动标准 ACP，适合与 Codex 做同任务对比。
+label: DSH
+description: DeepSeek Harness CLI，通过标准 ACP 驱动。可用哪些宿主能力由 MCP profile 决定。
 adapter: dsh-acp
 image_repository: ai-native-dsh-agent
 agent_version: 0.1.2-rc.1
+build:
+  kind: npm
+  package: "@deepseek-ai/dsh"
+  dockerfile: docker/dsh-agent/Dockerfile.release
 protocol: acp
 workdir: /workspace
+# The ACP runner writes protocol messages; this parser reads them.
+trace:
+  parser: dsh-acp
 entrypoint: node
 command:
   - /run-config/dsh-acp-runner.mjs
@@ -20,11 +27,6 @@ environment:
   DSH_REASONING_EFFORT: ${REASONING_EFFORT}
 writable_paths:
   - /tmp/dsh-home
-capabilities:
-  - filesystem
-  - shell
-  - mcp
-  - acp
 options:
   executable: dsh
   profile: acp

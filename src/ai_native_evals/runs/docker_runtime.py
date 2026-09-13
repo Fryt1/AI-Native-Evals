@@ -373,6 +373,11 @@ def _agent_run_args(
         "EVAL_SYSTEM_PROMPT_FILE=/run-config/agent-system-prompt.txt",
         "--env",
         f"EVAL_TASK_PROMPT_FILE={_PROMPT_FILE}",
+        # Where attachments were staged, inside the mounted configuration
+        # directory. The framework only says where they are; what they mean is
+        # for the Agent's own startup to decide.
+        "--env",
+        "EVAL_ATTACH_DIR=/run-config/attach",
         "--env",
         f"EVAL_RUN_ID={run['run_id']}",
         "--env",

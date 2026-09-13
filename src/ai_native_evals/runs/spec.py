@@ -54,6 +54,9 @@ class RunSpec:
         default_factory=lambda: AgentProfile("codex", "codex", "unknown")
     )
     resource_specs: tuple[ResourceSpec, ...] = ()
+    #: Resource id -> location from the config. Agent plugins resolve here, so a
+    #: plugin keeps its own repository and this one only records where it lives.
+    source_roots: dict[str, Any] = field(default_factory=dict)
     task_bundle: dict[str, Any] = field(default_factory=dict)
     preset: str | None = None
     # Which upstream served this run, and the env file holding its base URL plus

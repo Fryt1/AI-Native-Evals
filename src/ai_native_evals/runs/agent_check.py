@@ -171,12 +171,32 @@ def load_agent_profile(repo_root: Path, agent: str) -> AgentProfile | None:
 # --- static verification -----------------------------------------------------
 
 
-def check_static(repo_root: Path, agent: str, *, distro: str | None = None) -> AgentReport:
-    """Verify an Agent without starting anything."""
+def check_static(
+    repo_root: Path, agent: str, *, version: str = "", distro: str | None = None
+) -> AgentReport:
+    """Verify an Agent without starting anything.
+
+    `version` verifies a specific build instead of the profile's default, so one
+    Agent can be checked at each version it has.
+    """
     # One shared loader, so this check and a run can never disagree about what a
     # profile means. Two modules reading the YAML themselves is how a derived
     # `image` came to be handled in one and missed in the other.
     profile = load_agent_profile(repo_root, agent)
+    if profile is not None and version:
+        try:
+            profile = profile.with_version(version)
+        except Exception as exc:  # noqa: BLE001 - reported as a finding below
+            report = AgentReport(agent=agent, image="", level="static")
+            report.add(
+                AgentCheck(
+                    "version",
+                    "missing",
+                    detail=f"无法切换到版本 {version!r}：{exc}",
+                    hint="确认该 Agent 的 profile 声明了 image_repository",
+                )
+            )
+            return report
     image = profile.image if profile else ""
     report = AgentReport(agent=agent, image=image, level="static")
 
@@ -227,14 +247,6 @@ def check_static(repo_root: Path, agent: str, *, distro: str | None = None) -> A
     else:
         report.add(AgentCheck("image", "ok", detail=f"{image} ({status.image_id})"))
 
-    declared = [str(item) for item in profile.capabilities]
-    report.add(
-        AgentCheck(
-            "capabilities",
-            "ok",
-            detail="、".join(declared) if declared else "未声明能力",
-        )
-    )
     return report
 
 
@@ -266,6 +278,7 @@ def smoke_test_agent(
     *,
     model: str,
     provider_env_file: Path,
+    version: str = "",
     distro: str | None = None,
     timeout: float = DEFAULT_SMOKE_TIMEOUT_SECONDS,
 ) -> AgentReport:
@@ -278,7 +291,7 @@ def smoke_test_agent(
     The container and its network are removed on every path, including failure,
     so an interrupted check does not leave resources behind.
     """
-    report = check_static(repo_root, agent, distro=distro)
+    report = check_static(repo_root, agent, version=version, distro=distro)
     report.level = "smoke"
     if not report.usable:
         # No point starting a container for an Agent already known to be broken.
@@ -290,6 +303,11 @@ def smoke_test_agent(
         # reaching here means the report is contradictory; returning it is still
         # better than raising out of a health check.
         return report
+    if version:
+        try:
+            profile = profile.with_version(version)
+        except Exception:  # noqa: BLE001 - check_static already reported it
+            return report
     target = wsl_distro(distro)
     upstream = read_upstream_env(provider_env_file)
     if upstream is None:

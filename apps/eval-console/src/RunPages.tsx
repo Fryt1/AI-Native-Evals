@@ -351,8 +351,16 @@ export function LaunchDialog({ onClose, onOpenRun }: { onClose: () => void; onOp
   const modelOptions = agentModels(models?.models || []);
   const excludedModels = nonAgentModels(models?.models || []);
   const selectedAgent = (registry?.agents || []).find((entry) => entry.id === form.agent);
-  const agentNote = selectedAgent?.capabilities?.length
-    ? `可用能力：${selectedAgent.capabilities.join("、")}`
+  // What an Agent can do beyond files and commands comes from the MCP profile,
+  // not from the Agent. Saying so here points the operator at the control that
+  // actually changes it.
+  const agentNote = selectedAgent
+    ? [
+        selectedAgent.agent_version ? `版本 ${selectedAgent.agent_version}` : "",
+        "可用宿主能力由 MCP 配置决定",
+      ]
+        .filter(Boolean)
+        .join(" · ")
     : "";
   // A field with one option is not a decision, so it is hidden rather than
   // shown; the resolved value still appears in the plan preview.
