@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import mimetypes
 import re
 from collections.abc import Mapping
 from contextlib import asynccontextmanager
@@ -38,6 +37,7 @@ from .read_models import (
     run_evaluation,
     run_events,
 )
+from .readers import safe_media_type
 
 #: Largest artifact served inline as text. Larger files are a download.
 _MAX_INLINE_PREVIEW_BYTES = 25_000_000
@@ -106,22 +106,6 @@ class AgentCheckRequest(BaseModel):
     #: Verify this build instead of the profile's declared default, so one Agent
     #: can be checked at several versions.
     version: str = Field(default="", max_length=120)
-
-
-def _safe_artifact_media_type(path: Path, declared: str) -> str:
-    """The media type the browser may be told, given a subject-controlled file.
-
-    Artifacts come out of a workspace the evaluated Agent could write to, so both
-    the filename and the run's own `artifacts/manifest.json` are subject input.
-    Anything the browser would *execute* or evaluate as a document -- HTML, SVG,
-    XML, XHTML -- is served as an opaque download instead. Everything else keeps
-    its declared type, which is what makes JSON and text previews readable.
-    """
-    guessed = mimetypes.guess_type(path.name)[0] or ""
-    candidate = (declared or guessed or "application/octet-stream").split(";")[0].strip().lower()
-    if candidate in _ACTIVE_MEDIA_TYPES or candidate.endswith(("+xml", "/xml")):
-        return "application/octet-stream"
-    return candidate or "application/octet-stream"
 
 
 def _sanitize_artifact_text(content: str, runs_root: Path, artifact_path: Path) -> str:
@@ -445,7 +429,7 @@ def create_app(
         if value is None:
             raise HTTPException(status_code=404, detail="Artifact not found")
         artifact, path = value
-        mime = _safe_artifact_media_type(path, str(artifact.get("mime_type") or ""))
+        mime = safe_media_type(path, str(artifact.get("mime_type") or ""))
         disposition = "attachment" if download else "inline"
         filename = Path(str(artifact.get("relative_path") or path.name)).name
         if mime.startswith("text/") or mime in {
