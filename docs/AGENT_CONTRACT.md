@@ -11,11 +11,11 @@ places, connected by convention rather than by a declared relationship:
 | How to talk to it | the same profile, `adapter` + `protocol` | the profile, and `adapters/` |
 | How to read its log | the same profile, `adapter` | `adapters/events.py` |
 
-Adding an Agent means editing a build script that enumerates Agents by name,
+Adding an Agent meant editing a build script that enumerated Agents by name,
 adding a profile, and — when the protocol is new — writing an adapter. The
-enumeration is what makes this not an abstraction: `-IncludeDsh`,
-`-IncludeDshRelease`, `-CodexVersion` and `-DshVersion` are switches for two
-specific Agents, and the third Agent needs a third switch.
+enumeration is what made this not an abstraction: `-IncludeDshRelease`,
+`-CodexVersion` and `-DshVersion` were switches for two specific Agents, and a
+third Agent needed a third switch.
 
 ## What this document proposes
 
@@ -46,8 +46,9 @@ label: Codex
 agent_version: 0.153.4        # or a commit, for a source build
 ```
 
-`agent_version` already derives the image tag. For a source build the version is
-the commit (`src-c291e79`), which is what the tag already carries.
+`agent_version` derives the image tag. A source build would use its commit
+(`src-<commit>`) instead of a release number, which is what the tag would carry;
+no Agent does that today.
 
 ### build
 
@@ -66,15 +67,22 @@ build:
 # A checkout, identified by commit
 build:
   kind: source
-  source: dsh                   # resolved through paths.source_roots
-  dockerfile: docker/dsh-agent/Dockerfile
+  source: some_checkout           # an id in paths.source_roots
+  dockerfile: docker/<agent>/Dockerfile
 ```
+
+`kind: source` is declared and validated, but no Agent currently uses it. DSH
+was the one candidate and it was withdrawn: its workspace build type-checks
+`website`, `benchmarks` and every `tests/` directory, so compiling `lib/` inside
+the image means putting all of them back into a build context that excludes them
+on purpose -- several minutes per build, to support a case this repository does
+not have, since it does not modify DSH's source. An Agent whose checkout does
+build cleanly in an image can use this kind as it stands.
 
 ```yaml
 # Already built elsewhere; nothing to do
 build:
   kind: prebuilt
-  image: ai-native-dsh-agent:0.1.2-rc.1
 ```
 
 The build tool then takes an Agent id and reads its declaration:
@@ -82,7 +90,6 @@ The build tool then takes an Agent id and reads its declaration:
 ```powershell
 .\tools\eval.ps1 build codex
 .\tools\eval.ps1 build codex -Version 0.160.0
-.\tools\eval.ps1 build dsh-dev
 ```
 
 It no longer contains a list of Agents. A new Agent is a profile and a

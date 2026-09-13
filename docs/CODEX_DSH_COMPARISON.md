@@ -39,10 +39,10 @@ workspace/trace/evaluators/
 
 ## 解释
 
-`dsh-release` 是为了快速验证真实 DSH Docker 链路而使用的发布镜像；需要严格复现某个 DSH 源码 commit 时，改用源码镜像：
+`dsh-release` 是发布镜像，也是当前唯一受支持的 DSH Agent：
 
 ```powershell
-pwsh -File .\tools\build-sandbox-images.ps1 -IncludeDsh -UseMirror
+pwsh -File .\tools\build-sandbox-images.ps1 -IncludeDshRelease -UseMirror
 ```
 
-两种镜像共用同一套 Adapter/Workspace/Trace/Evaluator 契约；差别只在 DSH 镜像来源，不改变评测架构。
+曾经有一个从 DSH 源码构建的镜像，用来复现某个源码 commit。它已移除：workspace 的 `lib/` 编译产物需要把 `tests`、`website`、`benchmarks` 全部放进构建上下文再跑一次全量 `tsc`，而本仓库并不修改 DSH 的源码，这样做的代价没有对应需求。自研插件改由 profile 的 `attach` 在运行时投递，同样不需要源码镜像。

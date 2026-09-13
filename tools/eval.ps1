@@ -37,7 +37,6 @@ param(
 
     # Build options.
     [switch]$UseMirror,
-    [switch]$IncludeDsh,
     [switch]$IncludeDshRelease,
     [switch]$Offline,
 
@@ -174,7 +173,6 @@ switch ($Action) {
         Write-Section "Building sandbox images"
         $args = @()
         if ($UseMirror) { $args += "-UseMirror" }
-        if ($IncludeDsh) { $args += "-IncludeDsh" }
         if ($IncludeDshRelease) { $args += "-IncludeDshRelease" }
         if ($Offline) { $args += "-Offline" }
         Invoke-Script (Join-Path $PSScriptRoot "build-sandbox-images.ps1") $args

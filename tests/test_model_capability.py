@@ -126,6 +126,23 @@ def test_agent_entry_survives_a_minimal_profile(tmp_path: Path) -> None:
     assert entry["workdir"] == ""
 
 
+def test_a_profile_reports_the_build_kind_it_declares(tmp_path: Path) -> None:
+    """The build kind decides which versions this profile can run.
+
+    Two profiles may share an image repository while launching it differently,
+    so a profile offering the other's tags would invite a launch that fails.
+    """
+    root = _profile(tmp_path, "p", {"id": "p", "image": "img:1", "build": {"kind": "source"}})
+
+    assert _list_yaml_profiles(root, "agent")[0]["build"] == {"kind": "source"}
+
+
+def test_a_profile_without_a_build_block_reports_an_empty_one(tmp_path: Path) -> None:
+    root = _profile(tmp_path, "p", {"id": "p", "image": "img:1"})
+
+    assert _list_yaml_profiles(root, "agent")[0]["build"] == {}
+
+
 def test_adapter_only_profiles_still_report_a_summary(tmp_path: Path) -> None:
     """Every shipped Agent profile carries a description; this is the fallback."""
     root = _profile(tmp_path, "x", {"id": "x", "adapter": "dsh-acp"})

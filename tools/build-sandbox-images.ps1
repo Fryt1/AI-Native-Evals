@@ -5,7 +5,6 @@ param(
     [Alias("IncludeBlenderMcp")]
     [switch]$SkipMcp,
     [switch]$Offline,
-    [switch]$IncludeDsh,
     [switch]$IncludeDshRelease,
     [string]$CodexVersion = "0.153.4",
     [string]$DshVersion = "0.1.2-rc.1",
@@ -133,69 +132,6 @@ $agentArgs += $WslRoot
 
 Write-Host "Building Codex sandbox image ($agentTag)..."
 Invoke-Docker $agentArgs
-
-if ($IncludeDsh) {
-    $DshRootWindows = (Resolve-Path (Join-Path $RepoRoot "..\dsh")).Path
-    $DshDrive = $DshRootWindows.Substring(0, 1).ToLowerInvariant()
-    $DshRelative = $DshRootWindows.Substring(2).Replace("\", "/")
-    $DshRoot = "/mnt/$DshDrive$DshRelative"
-    $DshCommit = (& git -C $DshRootWindows rev-parse --verify HEAD).Trim()
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($DshCommit)) {
-        throw "Could not resolve the DSH repository commit: $DshRootWindows"
-    }
-    # Copying a checkout's node_modules into the build context sounds like a
-    # saving and is not one. This host's is 904 MB across 65k files, and the
-    # context crosses into WSL file by file: the build sat for over twelve
-    # minutes before the first instruction ran. Installing inside the image
-    # sends one layer instead, so node_modules stays excluded.
-    $dshDockerIgnore = Join-Path $DshRootWindows ".dockerignore"
-    $createdDshDockerIgnore = $false
-    # Written on every build rather than only when absent. A leftover file from
-    # an earlier run -- including one this script wrote before the exclusion
-    # list changed -- would otherwise be reused forever, and its exclusions are
-    # what decide whether the context is 35 MB or 1 GB.
-    $ignoreLines = @(
-        ".git", ".github", "node_modules", "website", "snapshots", "docs",
-        "**/tests", "**/test", "**/*.spec.ts", "**/*.test.ts",
-        "**/coverage", "**/dist", "**/lib"
-    )
-    $previousDockerIgnore = if (Test-Path -LiteralPath $dshDockerIgnore -PathType Leaf) {
-        Get-Content -LiteralPath $dshDockerIgnore -Raw
-    } else {
-        $null
-    }
-    $ignoreLines | Set-Content -LiteralPath $dshDockerIgnore -Encoding utf8
-    $createdDshDockerIgnore = $true
-    try {
-        # Built from source, so the identity is the commit rather than a release
-        # number. A fixed `:local` tag hid which commit the image contained and
-        # was overwritten by the next build.
-        $dshSourceTag = "ai-native-dsh-agent:src-$($DshCommit.Substring(0, 7))"
-        $dshArgs = @(
-            "build", "--pull=false",
-            "-f", "$WslRoot/docker/dsh-agent/Dockerfile",
-            "--build-arg", "NODE_BASE_IMAGE=$NodeBaseImage",
-            "--build-arg", "NPM_REGISTRY=$NpmRegistry",
-            "--build-arg", "DSH_COMMIT=$DshCommit",
-            "-t", $dshSourceTag,
-            $DshRoot
-        )
-        Write-Host "Building DSH ACP sandbox image (commit $DshCommit) as $dshSourceTag..."
-        Invoke-Docker $dshArgs
-    }
-    finally {
-        # The checkout is left as it was found: a file that existed is restored,
-        # one this script created is removed.
-        if ($createdDshDockerIgnore) {
-            if ($null -ne $previousDockerIgnore) {
-                Set-Content -LiteralPath $dshDockerIgnore -Value $previousDockerIgnore -Encoding utf8
-            }
-            else {
-                Remove-Item -LiteralPath $dshDockerIgnore -Force
-            }
-        }
-    }
-}
 
 if ($IncludeDshRelease) {
     # Tagged with the published version, matching the Codex image: the tag names

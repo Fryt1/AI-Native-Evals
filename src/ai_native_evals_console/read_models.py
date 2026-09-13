@@ -456,6 +456,9 @@ def _list_yaml_profiles(root: Path, kind: str) -> list[dict[str, Any]]:
             # how the two came to disagree.
             entry["workdir"] = str(data.get("workdir") or "")
             entry["agent_version"] = str(data.get("agent_version") or "")
+            # Exposed because it decides which versions this profile can run.
+            build = data.get("build")
+            entry["build"] = dict(build) if isinstance(build, Mapping) else {}
             entry["image"] = str(data.get("image") or "")
             if not entry["image"]:
                 repository = str(data.get("image_repository") or "")
@@ -471,10 +474,19 @@ def _list_yaml_profiles(root: Path, kind: str) -> list[dict[str, Any]]:
 
 
 def _agent_versions(entry: dict[str, Any]) -> list[str]:
-    """Versions of this Agent that are built and can actually be run.
+    """Versions of this Agent that are built and that this profile can run.
 
-    Read from the images, because a version nobody built cannot start: listing
-    it would offer a choice that fails at container start.
+    Two filters, both necessary.
+
+    Built: a version whose image does not exist cannot start, so offering it
+    would be offering a choice that fails at container start.
+
+    Compatible: two profiles may share an image repository while launching it
+    differently -- a published build and a source build of DSH are the same
+    repository with different entrypoints. Their tags are distinguishable only
+    by convention (`src-<commit>` for a source build), so the build kind decides
+    which tags belong to this profile. Without this, each profile offered the
+    other's versions and the picker invited a launch that cannot work.
     """
     from ai_native_evals.runs.images import available_versions
 
@@ -482,7 +494,13 @@ def _agent_versions(entry: dict[str, Any]) -> list[str]:
     repository = image.rpartition(":")[0] if ":" in image else ""
     if not repository or "/" in image.rpartition(":")[2]:
         return [str(entry["agent_version"])] if entry.get("agent_version") else []
-    return available_versions(repository)
+    built = available_versions(repository)
+    kind = str((entry.get("build") or {}).get("kind") or "")
+    if kind == "source":
+        return [tag for tag in built if tag.startswith("src-")]
+    if kind == "npm":
+        return [tag for tag in built if not tag.startswith("src-")]
+    return built
 
 
 def registry(repo_root: Path) -> dict[str, Any]:

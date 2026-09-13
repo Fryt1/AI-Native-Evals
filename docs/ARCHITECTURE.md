@@ -98,7 +98,7 @@ Adapter 是真正的外部协议 seam：
 - `DshAcpAdapter`：通过标准 ACP `initialize → session/new → session/prompt → session/close` 驱动 DSH；MCP 使用标准 ACP `McpServer` 声明，不使用私有 socket 客户端。
 - 新 Agent 只需实现 `AgentAdapter.run(AgentLaunchSpec)`，不需要改 Task、TestPlan 或 Scorer。
 
-`AI-Native-DSH` 不是这里的 DSH Agent 实现。DSH Agent 镜像从真正的 DSH 源仓库构建，该仓库的位置由 `config/eval.yaml` 的 `paths.source_roots.dsh_runtime` 指定，不在本仓库内、也不在本文档中固定。
+`AI-Native-DSH` 不是这里的 DSH Agent 实现。DSH Agent 镜像从发布的 DSH 包构建；`AI-Native-DSH` 是一个独立的插件项目，由 Agent profile 的 `attach` 在运行时投递进容器，不需要重建镜像。
 
 ### 4. SandboxRuntime：只负责隔离，不理解 Agent
 

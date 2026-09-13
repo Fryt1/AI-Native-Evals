@@ -86,8 +86,6 @@ when the network is available:
 
 ```powershell
 pwsh -NoProfile -File .\tools\build-sandbox-images.ps1 -IncludeDshRelease -UseMirror
-# Exact local dsh source commit (slower monorepo build):
-pwsh -NoProfile -File .\tools\build-sandbox-images.ps1 -IncludeDsh -UseMirror
 ```
 
 ## What is deliberately not cached in Git

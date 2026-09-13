@@ -246,7 +246,7 @@ def run_evaluator_agent(
             "--env",
             f"EVAL_MODEL_PROVIDER={run.get('model_provider') or 'eval'}",
             "--env",
-            f"EVAL_WIRE_API={protocol or run.get('protocol', 'responses')}",
+            f"EVAL_WIRE_API={_evaluator_wire_api(protocol, profile)}",
             "--env",
             f"EVAL_REASONING_EFFORT={reasoning_effort or run.get('reasoning_effort') or 'high'}",
             "--env",
@@ -388,6 +388,22 @@ def run_evaluator_agent(
         normalized_events_path=normalized_events_path,
         adapter=adapter,
     )
+
+
+def _evaluator_wire_api(explicit: str | None, profile: dict[str, Any]) -> str:
+    """The wire protocol to configure the *evaluator* with.
+
+    The evaluator's protocol is its own. The resolver's negotiation settles what
+    the *subject* speaks, and for a DSH subject that is `chat`; passing that value
+    on handed a Codex evaluator a protocol it refuses at startup, so every run
+    against a non-`responses` subject failed during evaluation while the subject
+    had in fact worked. An explicit argument still wins, because a caller naming
+    one is talking about this evaluator.
+    """
+    if explicit:
+        return explicit
+    declared = profile.get("protocol")
+    return str(declared) if declared else "responses"
 
 
 def default_readonly_mounts(manifest: dict[str, Any]) -> list[tuple[str, str, bool]]:
