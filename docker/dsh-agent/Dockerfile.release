@@ -3,6 +3,10 @@ FROM ${NODE_BASE_IMAGE}
 
 ARG DSH_VERSION=0.1.2-rc.1
 ARG NPM_REGISTRY=https://registry.npmmirror.com
+# Record the Agent version inside the image, so a run can be traced back to the
+# exact DSH it used without consulting the tag it happened to be pulled under.
+LABEL ai.native.agent="dsh" \
+      ai.native.agent.version="$DSH_VERSION"
 
 RUN npm install --global --no-fund --no-audit --registry="${NPM_REGISTRY}" @deepseek-ai/dsh@${DSH_VERSION} \
     && mkdir -p /tmp/dsh-home /workspace \

@@ -4,7 +4,8 @@ description: 工作目录在项目快照内，可通过 MCP 操作宿主机的 B
 adapter: codex
 # Same image as `codex`; this profile differs by workdir and declared
 # capabilities, not by what is installed.
-image: ai-native-codex-agent:local
+image_repository: ai-native-codex-agent
+agent_version: 0.153.4
 protocol: responses
 workdir: /workspace/game-engine
 writable_paths:

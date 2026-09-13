@@ -88,8 +88,12 @@ Invoke-Docker $gatewayArgs
 # own. A second, MCP-less variant only created a way for a task that needs
 # Blender to run without it -- silently, because a missing stdio binary does
 # not fail a run, it just removes tools the Agent was supposed to have.
+#
+# The tag carries the Agent's version. A fixed `:local` tag meant a second
+# version overwrote the first, so two Codex versions could not coexist and a
+# comparison between them was impossible.
 $agentDockerfile = "$WslRoot/docker/codex-agent/Dockerfile"
-$agentTag = "ai-native-codex-agent:local"
+$agentTag = "ai-native-codex-agent:$CodexVersion"
 $agentArgs = @("build")
 $agentArgs += $pullArgs
 $agentArgs += $buildNetworkArgs
@@ -139,16 +143,20 @@ if ($IncludeDsh) {
             $ignoreLines | Set-Content -LiteralPath $dshDockerIgnore -Encoding utf8
             $createdDshDockerIgnore = $true
         }
+        # Built from source, so the identity is the commit rather than a release
+        # number. A fixed `:local` tag hid which commit the image contained and
+        # was overwritten by the next build.
+        $dshSourceTag = "ai-native-dsh-agent:src-$($DshCommit.Substring(0, 7))"
         $dshArgs = @(
             "build", "--pull=false",
             "-f", "$WslRoot/docker/dsh-agent/Dockerfile",
             "--build-arg", "NODE_BASE_IMAGE=$NodeBaseImage",
             "--build-arg", "NPM_REGISTRY=$NpmRegistry",
             "--build-arg", "DSH_COMMIT=$DshCommit",
-            "-t", "ai-native-dsh-agent:local",
+            "-t", $dshSourceTag,
             $DshRoot
         )
-        Write-Host "Building DSH ACP sandbox image (commit $DshCommit)..."
+        Write-Host "Building DSH ACP sandbox image (commit $DshCommit) as $dshSourceTag..."
         Invoke-Docker $dshArgs
     }
     finally {
@@ -159,16 +167,19 @@ if ($IncludeDsh) {
 }
 
 if ($IncludeDshRelease) {
+    # Tagged with the published version, matching the Codex image: the tag names
+    # the Agent version, so two versions coexist instead of overwriting.
+    $dshReleaseTag = "ai-native-dsh-agent:$DshVersion"
     $dshReleaseArgs = @(
         "build", "--pull=false",
         "-f", "$WslRoot/docker/dsh-agent/Dockerfile.release",
         "--build-arg", "NODE_BASE_IMAGE=$NodeBaseImage",
         "--build-arg", "NPM_REGISTRY=$NpmRegistry",
         "--build-arg", "DSH_VERSION=$DshVersion",
-        "-t", "ai-native-dsh-agent:release",
+        "-t", $dshReleaseTag,
         $WslRoot
     )
-    Write-Host "Building DSH release ACP sandbox image..."
+    Write-Host "Building DSH release ACP sandbox image as $dshReleaseTag..."
     Invoke-Docker $dshReleaseArgs
 }
 

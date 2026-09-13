@@ -57,6 +57,10 @@ COPY --from=blender-mcp /opt/blender-mcp /opt/blender-mcp
 COPY --from=blender-mcp /opt/comfy-mcp /opt/comfy-mcp
 
 ARG CODEX_VERSION=0.153.4
+# Record the Agent version inside the image, so a run can be traced back to the
+# exact Codex it used without consulting the tag it happened to be pulled under.
+LABEL ai.native.agent="codex" \
+      ai.native.agent.version="$CODEX_VERSION"
 # The pinned Node base already contains git. Copy the small runtime and its
 # helpers instead of installing Debian packages during an image build; this
 # keeps both online and offline builds independent of apt network access.

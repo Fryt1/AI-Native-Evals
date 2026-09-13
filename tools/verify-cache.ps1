@@ -62,7 +62,17 @@ if ($CheckDockerImages) {
     if (-not (Get-Command wsl.exe -ErrorAction SilentlyContinue)) {
         $errors.Add("wsl.exe is not available")
     } else {
-        foreach ($image in @("python:3.12-slim", "node:22-bookworm", "ai-native-llm-gateway:local", "ai-native-codex-agent:local")) {
+        # Derived from the recorded version rather than spelled out, so the tag
+        # cannot drift from the Codex build it is supposed to describe.
+        $codexVersionFile = Join-Path $PSScriptRoot "..\cache\codex\VERSION"
+        $codexVersion = if (Test-Path -LiteralPath $codexVersionFile) {
+            (Get-Content -LiteralPath $codexVersionFile -Raw).Trim()
+        } else {
+            ""
+        }
+        $images = @("python:3.12-slim", "node:22-bookworm", "ai-native-llm-gateway:local")
+        if ($codexVersion) { $images += "ai-native-codex-agent:$codexVersion" }
+        foreach ($image in $images) {
             & wsl.exe -d $Distro -- docker image inspect $image *> $null
             if ($LASTEXITCODE -ne 0) {
                 $errors.Add("Docker image is not loaded: $image")

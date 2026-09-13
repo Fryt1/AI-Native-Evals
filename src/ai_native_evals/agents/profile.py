@@ -27,6 +27,9 @@ class AgentProfile:
     writable_paths: tuple[str, ...] = ()
     capabilities: tuple[str, ...] = ()
     options: dict[str, Any] = field(default_factory=dict)
+    #: The Agent's own version, when the profile names one. Recorded in the run
+    #: manifest so a result can be traced to the exact build it came from.
+    agent_version: str = ""
 
     @classmethod
     def from_mapping(cls, profile_id: str, value: Mapping[str, Any]) -> AgentProfile:
@@ -36,9 +39,26 @@ class AgentProfile:
         adapter = _string(value, "adapter", "")
         if not adapter:
             raise AgentProfileError(f"agent profile {profile_id!r} requires adapter")
+        # `agent_version` plus `image_repository` is the preferred spelling: the
+        # tag is then derived from the version, so the two cannot drift. A bare
+        # `image` is still accepted for profiles that name no version.
+        agent_version = _string(value, "agent_version", "")
         image = _string(value, "image", "")
         if not image:
+            repository = _string(value, "image_repository", "")
+            if repository and agent_version:
+                image = f"{repository}:{agent_version}"
+            elif repository:
+                raise AgentProfileError(
+                    f"agent profile {profile_id!r} sets image_repository but no agent_version"
+                )
+        if not image:
             raise AgentProfileError(f"agent profile {profile_id!r} requires image")
+        if agent_version and ":" in image and not image.endswith(f":{agent_version}"):
+            raise AgentProfileError(
+                f"agent profile {profile_id!r} image {image!r} does not end in its "
+                f"declared agent_version {agent_version!r}"
+            )
         entrypoint = value.get("entrypoint")
         if entrypoint is not None and (not isinstance(entrypoint, str) or not entrypoint.strip()):
             raise AgentProfileError(f"agent profile {profile_id!r} entrypoint must be a string")
@@ -83,6 +103,7 @@ class AgentProfile:
             writable_paths=tuple(writable_paths),
             capabilities=tuple(capabilities),
             options=dict(options),
+            agent_version=agent_version,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -100,6 +121,7 @@ class AgentProfile:
             "writable_paths": list(self.writable_paths),
             "capabilities": list(self.capabilities),
             "options": dict(self.options),
+            "agent_version": self.agent_version,
         }
 
 

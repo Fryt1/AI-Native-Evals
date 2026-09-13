@@ -199,6 +199,22 @@ def test_images_check_without_a_run_is_unknown_not_missing() -> None:
     assert "未选择" in check.detail
 
 
+def _a_real_agent_image() -> str:
+    """An image reference that actually exists on this machine.
+
+    Derived rather than hard-coded: Agent tags carry a version now, so a literal
+    `:local` stops existing the moment the version changes, and the test then
+    fails for a reason that has nothing to do with what it checks.
+    """
+    import yaml
+
+    repo = Path(__file__).resolve().parents[1]
+    profile = yaml.safe_load(
+        (repo / "profiles" / "agents" / "codex.yaml").read_text(encoding="utf-8")
+    )
+    return f"{profile['image_repository']}:{profile['agent_version']}"
+
+
 def test_agent_images_is_machine_state_not_run_state(tmp_path: Path) -> None:
     """An Agent whose image is missing is broken for every Task.
 
@@ -210,7 +226,7 @@ def test_agent_images_is_machine_state_not_run_state(tmp_path: Path) -> None:
     root = tmp_path / "repo"
     (root / "profiles" / "agents").mkdir(parents=True)
     (root / "profiles" / "agents" / "good.yaml").write_text(
-        "id: good\nadapter: codex\nimage: ai-native-codex-agent:local\n", encoding="utf-8"
+        f"id: good\nadapter: codex\nimage: {_a_real_agent_image()}\n", encoding="utf-8"
     )
 
     check = check_agent_images(root)
@@ -252,7 +268,7 @@ def test_agent_images_ignores_a_profile_without_an_image(tmp_path: Path) -> None
     root = tmp_path / "repo"
     (root / "profiles" / "agents").mkdir(parents=True)
     (root / "profiles" / "agents" / "good.yaml").write_text(
-        "id: good\nadapter: codex\nimage: ai-native-codex-agent:local\n", encoding="utf-8"
+        f"id: good\nadapter: codex\nimage: {_a_real_agent_image()}\n", encoding="utf-8"
     )
     (root / "profiles" / "agents" / "noimg.yaml").write_text(
         "id: noimg\nadapter: codex\n", encoding="utf-8"

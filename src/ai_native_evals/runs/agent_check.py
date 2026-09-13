@@ -154,13 +154,35 @@ def load_agent_profile(repo_root: Path, agent: str) -> dict[str, Any]:
     return {}
 
 
+def _resolve_profile(repo_root: Path, agent: str, profile: dict[str, Any]) -> Any:
+    """Materialize a profile the way a run would, or ``None`` if it is invalid.
+
+    Going through the real resolver is what keeps this check honest: a profile
+    that derives its image tag from a version resolves here exactly as it would
+    at run time, and a malformed one is reported rather than guessed at.
+    """
+    if not profile:
+        return None
+    from ai_native_evals.agents.profile import AgentProfile, AgentProfileError
+
+    try:
+        return AgentProfile.from_mapping(str(profile.get("id") or agent), profile)
+    except AgentProfileError:
+        return None
+
+
 # --- static verification -----------------------------------------------------
 
 
 def check_static(repo_root: Path, agent: str, *, distro: str | None = None) -> AgentReport:
     """Verify an Agent without starting anything."""
     profile = load_agent_profile(repo_root, agent)
-    image = str(profile.get("image") or "")
+    # Resolved through the same code a run uses, so the check cannot disagree
+    # with what the run would actually start. Reading the raw `image` key here
+    # reported a regression the moment profiles began deriving the tag from a
+    # version instead of spelling it out.
+    resolved = _resolve_profile(repo_root, agent, profile)
+    image = resolved.image if resolved else str(profile.get("image") or "")
     report = AgentReport(agent=agent, image=image, level="static")
 
     if not profile:
@@ -177,7 +199,8 @@ def check_static(repo_root: Path, agent: str, *, distro: str | None = None) -> A
 
     # A run cannot start without these; the profile is the only place they exist.
     for key in ("adapter", "image"):
-        value = str(profile.get(key) or "").strip()
+        value = resolved.image if (key == "image" and resolved) else str(profile.get(key) or "")
+        value = value.strip()
         if value:
             report.add(AgentCheck(key, "ok", detail=value))
         else:
@@ -189,6 +212,8 @@ def check_static(repo_root: Path, agent: str, *, distro: str | None = None) -> A
                     hint=f"在 profile 中加入 `{key}:`",
                 )
             )
+    if resolved is not None and resolved.agent_version:
+        report.add(AgentCheck("version", "ok", detail=resolved.agent_version))
     if not image:
         return report
 

@@ -5,6 +5,9 @@ param(
     [string]$NodeBaseImage = "node:22-bookworm",
     [string]$PyPIIndex = "https://pypi.tuna.tsinghua.edu.cn/simple",
     [string]$NpmRegistry = "https://registry.npmmirror.com",
+    # The DSH release to cache. Kept in step with the build script's default so
+    # the cached image is the one a profile names.
+    [string]$DshVersion = "0.1.2-rc.1",
     [switch]$RegenerateLocks,
     [switch]$RefreshWheels,
     [switch]$SkipImageSave
@@ -69,22 +72,25 @@ foreach ($image in @($PythonBaseImage, $NodeBaseImage)) {
 # A lock is generated from a known-good image when requested. The Blender local
 # source package itself is intentionally not put in the PyPI wheelhouse; it is
 # installed from vendor/blender-mcp/mcp.tar.gz.
+# Derived from the recorded version, so every use below names the same image and
+# the tag cannot drift from the Codex build it describes.
+$CodexImage = "ai-native-codex-agent:$((Get-Content (Join-Path $CacheRoot 'codex\VERSION') -Raw).Trim())"
 $codexImageExists = $false
-& wsl.exe -d $Distro -- docker image inspect ai-native-codex-agent:local *> $null
+& wsl.exe -d $Distro -- docker image inspect $CodexImage *> $null
 $codexImageExists = $LASTEXITCODE -eq 0
 if ($RegenerateLocks) {
     if (-not $codexImageExists) {
-        throw "-RegenerateLocks requires ai-native-codex-agent:local to exist"
+        throw "-RegenerateLocks requires $CodexImage to exist"
     }
-    Write-Host "Regenerating Python locks from ai-native-codex-agent:local..."
+    Write-Host "Regenerating Python locks from $CodexImage..."
     $blenderLock = Join-Path $PythonCache "blender-mcp\requirements.lock"
     $comfyLock = Join-Path $PythonCache "comfy-mcp\requirements.lock"
-    wsl.exe -d $Distro -- docker run --rm --entrypoint /bin/sh ai-native-codex-agent:local `
+    wsl.exe -d $Distro -- docker run --rm --entrypoint /bin/sh $CodexImage `
         -c "/opt/blender-mcp/bin/pip freeze" 2>&1 |
         Where-Object { $_ -notmatch '^blender-mcp @ ' } |
         Set-Content -Path $blenderLock -Encoding utf8
     if ($LASTEXITCODE -ne 0) { throw "Could not regenerate Blender lock" }
-    wsl.exe -d $Distro -- docker run --rm --entrypoint /bin/sh ai-native-codex-agent:local `
+    wsl.exe -d $Distro -- docker run --rm --entrypoint /bin/sh $CodexImage `
         -c "/opt/comfy-mcp/bin/pip freeze" 2>&1 |
         Set-Content -Path $comfyLock -Encoding utf8
     if ($LASTEXITCODE -ne 0) { throw "Could not regenerate Comfy lock" }
@@ -128,7 +134,7 @@ if (-not $SkipImageSave) {
         $PythonBaseImage,
         $NodeBaseImage,
         "ai-native-llm-gateway:local",
-        "ai-native-codex-agent:local"
+        "$CodexImage"
     )
     $available = @()
     foreach ($image in $images) {
@@ -160,10 +166,9 @@ function Get-ImageRecord([string]$Image) {
 }
 
 $records = @()
-# The evaluation images that exist after the single-image change. The retired
-# `ai-native-codex-agent:all-mcp` variant is gone, and listing it here only
-# produced a silent no-op that read as if it were still part of the cache.
-foreach ($image in @($PythonBaseImage, $NodeBaseImage, "ai-native-llm-gateway:local", "ai-native-codex-agent:local", "ai-native-dsh-agent:release")) {
+# The evaluation images that exist today. Each Agent's tag carries its version,
+# so a second version is cached alongside the first rather than replacing it.
+foreach ($image in @($PythonBaseImage, $NodeBaseImage, "ai-native-llm-gateway:local", "$CodexImage", "ai-native-dsh-agent:$DshVersion")) {
     & wsl.exe -d $Distro -- docker image inspect $image *> $null
     if ($LASTEXITCODE -eq 0) { $records += Get-ImageRecord $image }
 }

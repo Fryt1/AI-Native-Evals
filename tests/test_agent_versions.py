@@ -1,0 +1,177 @@
+"""An Agent's version is part of its identity.
+
+Before this, every Codex build was tagged `:local`, so a second version
+overwrote the first and two versions could not be compared. The version now
+names the tag, is recorded in the image itself, and reaches the run profile.
+
+These tests pin the rules that keep the version and the tag from drifting apart,
+which is the failure mode that made the old scheme unusable.
+"""
+
+from __future__ import annotations
+
+import subprocess
+from pathlib import Path
+
+import pytest
+import yaml
+
+from ai_native_evals.agents.profile import AgentProfile, AgentProfileError
+
+REPO = Path(__file__).resolve().parents[1]
+
+
+def _profile(**overrides: object) -> dict:
+    base = {
+        "adapter": "codex",
+        "image_repository": "ai-native-codex-agent",
+        "agent_version": "1.2.3",
+    }
+    base.update(overrides)
+    return base
+
+
+# --- the version names the tag -----------------------------------------------
+
+
+def test_the_tag_is_derived_from_the_version() -> None:
+    profile = AgentProfile.from_mapping("p", _profile())
+
+    assert profile.image == "ai-native-codex-agent:1.2.3"
+    assert profile.agent_version == "1.2.3"
+
+
+def test_a_bare_image_still_works() -> None:
+    """Profiles that name no version must keep loading."""
+    profile = AgentProfile.from_mapping("p", {"adapter": "codex", "image": "some:tag"})
+
+    assert profile.image == "some:tag"
+    assert profile.agent_version == ""
+
+
+def test_a_repository_without_a_version_is_refused() -> None:
+    """A repository alone cannot name an image, and guessing a tag would be worse."""
+    with pytest.raises(AgentProfileError, match="agent_version"):
+        AgentProfile.from_mapping("p", {"adapter": "codex", "image_repository": "x"})
+
+
+def test_an_image_that_contradicts_its_version_is_refused() -> None:
+    """The two spellings must agree, or the run would use a different image than
+    the manifest reports."""
+    with pytest.raises(AgentProfileError, match="does not end in"):
+        AgentProfile.from_mapping("p", _profile(image="ai-native-codex-agent:9.9.9"))
+
+
+def test_a_matching_image_and_version_are_accepted() -> None:
+    profile = AgentProfile.from_mapping(
+        "p", _profile(image="ai-native-codex-agent:1.2.3")
+    )
+
+    assert profile.image == "ai-native-codex-agent:1.2.3"
+
+
+def test_the_version_survives_into_the_manifest_snapshot() -> None:
+    """A run must be traceable to the Agent build it used."""
+    profile = AgentProfile.from_mapping("p", _profile())
+
+    assert profile.to_dict()["agent_version"] == "1.2.3"
+
+
+# --- the repository's own profiles -------------------------------------------
+
+
+def _agent_profiles() -> list[tuple[str, dict]]:
+    return [
+        (path.name, yaml.safe_load(path.read_text(encoding="utf-8")))
+        for path in sorted((REPO / "profiles" / "agents").glob("*.yaml"))
+    ]
+
+
+def test_every_shipped_profile_declares_a_version() -> None:
+    """An Agent whose build is unnamed cannot be reproduced."""
+    missing = [name for name, data in _agent_profiles() if not data.get("agent_version")]
+
+    assert missing == []
+
+
+def test_every_shipped_profile_resolves_its_image() -> None:
+    for name, data in _agent_profiles():
+        profile = AgentProfile.from_mapping(str(data.get("id") or name), data)
+        assert profile.image.endswith(f":{profile.agent_version}"), name
+
+
+def test_no_shipped_profile_uses_a_mutable_tag() -> None:
+    """`:local` and friends name no version, which is what made two builds
+    indistinguishable."""
+    offenders = [
+        name
+        for name, data in _agent_profiles()
+        if str(data.get("image", "")).endswith((":local", ":latest", ":release"))
+    ]
+
+    assert offenders == []
+
+
+# --- the build script --------------------------------------------------------
+
+
+def test_the_build_script_tags_with_the_version() -> None:
+    text = (REPO / "tools" / "build-sandbox-images.ps1").read_text(encoding="utf-8")
+
+    assert "ai-native-codex-agent:$CodexVersion" in text
+    assert '$dshReleaseTag = "ai-native-dsh-agent:$DshVersion"' in text
+
+
+def test_the_build_script_no_longer_writes_a_versionless_tag() -> None:
+    """A leftover `:local` would recreate the overwriting problem."""
+    text = (REPO / "tools" / "build-sandbox-images.ps1").read_text(encoding="utf-8")
+
+    assert '"ai-native-codex-agent:local"' not in text
+    assert '"ai-native-dsh-agent:release"' not in text
+
+
+def test_the_images_carry_a_version_label() -> None:
+    """The tag is a claim; the label is inside the image and cannot be re-pointed."""
+    codex = (REPO / "docker" / "codex-agent" / "Dockerfile").read_text(encoding="utf-8")
+    dsh = (REPO / "docker" / "dsh-agent" / "Dockerfile.release").read_text(encoding="utf-8")
+
+    assert "ai.native.agent.version" in codex
+    assert "ai.native.agent.version" in dsh
+
+
+def test_the_offline_scripts_derive_the_tag_rather_than_spelling_it() -> None:
+    """A literal tag in three scripts is three places to forget after a bump."""
+    for name in ("prepare-offline-cache.ps1", "verify-cache.ps1"):
+        text = (REPO / "tools" / name).read_text(encoding="utf-8")
+        assert "ai-native-codex-agent:local" not in text, name
+
+
+# --- what is actually on this machine ----------------------------------------
+
+
+def _docker_images() -> set[str]:
+    result = subprocess.run(
+        ["wsl.exe", "-e", "docker", "images", "--format", "{{.Repository}}:{{.Tag}}"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    return {line.strip() for line in result.stdout.splitlines() if line.strip()}
+
+
+@pytest.mark.skipif(
+    "ai-native-codex-agent" not in " ".join(_docker_images()),
+    reason="no Agent image built on this machine",
+)
+def test_every_resolvable_agent_image_exists() -> None:
+    """The profiles and the built images must agree, or every run through a
+    profile dies at container start."""
+    images = _docker_images()
+    missing = [
+        AgentProfile.from_mapping(str(data.get("id") or name), data).image
+        for name, data in _agent_profiles()
+        if AgentProfile.from_mapping(str(data.get("id") or name), data).image not in images
+    ]
+
+    assert missing == []

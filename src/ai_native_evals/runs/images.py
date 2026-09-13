@@ -7,9 +7,10 @@ Two failures motivated this module, and both were silent:
   when the missing thing was an MCP binary rather than the image, did not fail
   at all: the Agent ran without the MCP servers its task required and still
   reported success.
-* An image tag says nothing about what is inside it. A rebuilt image keeps its
-  tag, so a run record naming ``ai-native-codex-agent:local`` cannot say which
-  build actually ran. The manifest records the resolved image ID instead.
+* An image tag alone still does not say which build ran. Agent tags now carry
+  the Agent's version, so two versions coexist instead of overwriting, but a
+  rebuild of the same version keeps its tag. The manifest therefore records the
+  resolved image ID as well, which is the only value that identifies a build.
 
 The check is deliberately separate from the Docker runtime: a preview must be
 able to answer "can this run start?" without creating containers, and an

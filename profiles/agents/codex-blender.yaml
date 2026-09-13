@@ -5,7 +5,8 @@ adapter: codex
 # The same image as every other Codex profile. Profiles differ by workdir and
 # declared capabilities, not by what is installed -- MCP servers come from the
 # run's MCP profile, never from the image.
-image: ai-native-codex-agent:local
+image_repository: ai-native-codex-agent
+agent_version: 0.153.4
 protocol: responses
 # `/workspace` rather than a project mount: this profile drives a host
 # application and needs no repository snapshot, so it stays usable for Tasks
