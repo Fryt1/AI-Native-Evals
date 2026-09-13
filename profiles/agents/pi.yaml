@@ -1,0 +1,26 @@
+id: pi
+label: pi
+description: >-
+  earendil-works 的编码 Agent CLI，单次命令驱动。内建 read / bash / edit / write
+  工具，按 --mode json 输出自己的事件流。可用哪些宿主能力由 MCP profile 决定。
+# adapter 与 trace.parser 是两件事：前者只在进程内 Inspect 路径使用，Docker 路径
+# 不看它；后者决定怎么读日志。pi 的既有解析器还没人写，所以它用 generic ——
+# 仍然产生事件，只是类型识别不出来。
+image_repository: ai-native-pi-agent
+agent_version: 0.85.1
+# 构建只需要两件事：跑哪个 Dockerfile、版本参数叫什么。
+# 怎么装（npm 全局安装）、装什么、装完怎么验证，都是 Dockerfile 自己的事。
+build:
+  dockerfile: docker/pi-agent/Dockerfile
+  version_arg: PI_VERSION
+# pi 的 gateway 路由按 chat-completions 发请求。这不是猜的：entrypoint 用
+# models.json 声明了这条路由，协议名就是 agents.py 认的那个。
+protocol: chat
+workdir: /workspace
+# pi 输出自己的 JSON 事件流；这个解析器读它。
+trace:
+  parser: pi
+entrypoint: /usr/local/bin/ai-native-pi-entrypoint
+# pi 在 $PI_CODING_AGENT_DIR 下写会话文件与 provider 声明，运行用户拥有该目录。
+writable_paths:
+  - /opt/pi-home

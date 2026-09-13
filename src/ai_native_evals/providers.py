@@ -45,11 +45,13 @@ AGENT_REASONING_LEVELS: dict[str, tuple[str, ...]] = {
 
 # Which wire protocols each Agent can actually speak. Codex renders either
 # protocol into its config; DSH's built-in DeepSeek route is chat-completions
-# only, so a responses-only provider cannot serve a DSH run. Both sides must
-# agree on one protocol, and neither side gets to assume it.
+# only, so a responses-only provider cannot serve a DSH run. pi declares its
+# gateway route as `openai-completions`. Both sides must agree on one protocol,
+# and neither side gets to assume it.
 AGENT_WIRE_APIS: dict[str, tuple[str, ...]] = {
     "codex": ("responses", "chat"),
     "dsh-acp": ("chat",),
+    "pi": ("chat",),
 }
 
 # Providers and Agents spell the "no extra reasoning" level differently.

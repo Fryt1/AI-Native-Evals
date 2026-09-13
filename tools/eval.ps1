@@ -62,13 +62,21 @@ $script:LastExit = 0
 
 function Invoke-Cli {
     param([string[]]$Arguments)
+    # Array splat is correct here: the target is an external program, and each
+    # element becomes one argv entry.
     & uv run ai-native-evals @Arguments
     $script:LastExit = $LASTEXITCODE
 }
 
 function Invoke-Script {
-    param([string]$Path, [string[]]$Arguments = @())
-    & $Path @Arguments
+    # Named splat, not an array. `& $script @arguments` expands each element as a
+    # *positional* argument, so `@("-Agent","codex")` bound "-Agent" to the first
+    # parameter and left "codex" with nowhere to go. The build script then ran
+    # with an empty distro name and every wsl call failed with
+    # WSL_E_DISTRO_NOT_FOUND -- which is why `eval.ps1 build -Agent x` never
+    # worked, while calling the build script directly did.
+    param([string]$Path, [hashtable]$Named = @{})
+    & $Path @Named
     $script:LastExit = $LASTEXITCODE
 }
 
@@ -105,10 +113,13 @@ switch ($Action) {
 
     "preflight" {
         Write-Section "Machine environment"
-        $args = @("preflight") + $selection
-        if ($Task) { $args = @("preflight", $Task) + $selection }
-        if ($Json) { $args += "--json" }
-        Invoke-Cli $args
+        # Never `$args`: PowerShell's automatic argument array ignores
+        # assignment, so what reached the child process was whatever this script
+        # was invoked with rather than the switches built here.
+        $cliArgs = @("preflight") + $selection
+        if ($Task) { $cliArgs = @("preflight", $Task) + $selection }
+        if ($Json) { $cliArgs += "--json" }
+        Invoke-Cli $cliArgs
         exit $script:LastExit
     }
 
@@ -130,9 +141,9 @@ switch ($Action) {
         $doctorOk = $script:LastExit -eq 0
 
         Write-Section "Machine environment"
-        $args = @("preflight") + $selection
-        if ($Task) { $args = @("preflight", $Task) + $selection }
-        Invoke-Cli $args
+        $preflightArgs = @("preflight") + $selection
+        if ($Task) { $preflightArgs = @("preflight", $Task) + $selection }
+        Invoke-Cli $preflightArgs
         $preflightOk = $script:LastExit -eq 0
 
         Write-Section "Summary"
@@ -172,12 +183,13 @@ switch ($Action) {
 
     "build" {
         Write-Section "Building sandbox images"
-        $args = @()
-        if ($Agent) { $args += @("-Agent", $Agent) }
-        if ($Version) { $args += @("-Version", $Version) }
-        if ($UseMirror) { $args += "-UseMirror" }
-        if ($Offline) { $args += "-Offline" }
-        Invoke-Script (Join-Path $PSScriptRoot "build-sandbox-images.ps1") $args
+        # Named splat: the build script's switches are parameters, not argv.
+        $buildArgs = @{}
+        if ($Agent) { $buildArgs["Agent"] = @($Agent) }
+        if ($Version) { $buildArgs["Version"] = $Version }
+        if ($UseMirror) { $buildArgs["UseMirror"] = $true }
+        if ($Offline) { $buildArgs["Offline"] = $true }
+        Invoke-Script (Join-Path $PSScriptRoot "build-sandbox-images.ps1") $buildArgs
         if ($script:LastExit -ne 0) { exit $script:LastExit }
         Write-Host ""
         Write-Host "  Verify with: .\tools\eval.ps1 check" -ForegroundColor Green
@@ -186,16 +198,16 @@ switch ($Action) {
 
     "cache" {
         Write-Section "Offline dependency cache"
-        Invoke-Script (Join-Path $PSScriptRoot "prepare-offline-cache.ps1") @()
+        Invoke-Script (Join-Path $PSScriptRoot "prepare-offline-cache.ps1")
         if ($script:LastExit -ne 0) { exit $script:LastExit }
         Write-Section "Verifying cache"
-        Invoke-Script (Join-Path $PSScriptRoot "verify-cache.ps1") @()
+        Invoke-Script (Join-Path $PSScriptRoot "verify-cache.ps1")
         exit $script:LastExit
     }
 
     "console" {
         Write-Section "AI-Native Eval Console"
-        Invoke-Script (Join-Path $PSScriptRoot "console.ps1") @()
+        Invoke-Script (Join-Path $PSScriptRoot "console.ps1")
         exit $script:LastExit
     }
 

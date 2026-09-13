@@ -18,6 +18,9 @@ _NORMALIZED_TYPES = {
     "turn_completed",
     "model_request",
     "model_response",
+    "prompt",
+    "message_started",
+    "message_completed",
     "agent_message",
     "reasoning",
     "tool_call",
@@ -26,6 +29,8 @@ _NORMALIZED_TYPES = {
     "command_completed",
     "file_changed",
     "approval_requested",
+    "retry",
+    "compaction",
     "error",
     "provider_event",
 }
@@ -82,6 +87,102 @@ def normalize_codex_event(
             "raw": dict(event),
         },
     )
+
+
+def normalize_pi_event(
+    event: Mapping[str, Any],
+    *,
+    seq: int,
+    agent_id: str = "pi",
+) -> dict[str, Any] | None:
+    """Map one pi JSONL event into the stable event vocabulary.
+
+    ``pi --print --mode json`` writes one object per line. The names below were
+    read from a real run through this repository's gateway, not from the help
+    text: a completed turn emits `session`, `agent_start`, `turn_start`, the
+    two user `message_*` events, then `message_start` / `message_update` /
+    `message_end` for the assistant, `turn_end`, `agent_end` and
+    `agent_settled`.
+
+    `message_update` carries the streaming deltas and is mapped to a provider
+    event rather than to a message: the assistant's text arrives complete in
+    `message_end`, and emitting it twice would double every response.
+
+    Tool calls arrive as pi's own names (`read`, `bash`, `edit`, `write`), which
+    is what this vocabulary is for: a consumer asking "did this run touch a
+    file" should not need to know which product produced the log.
+    """
+    event_type = str(event.get("type", ""))
+    message = event.get("message")
+    message = message if isinstance(message, Mapping) else {}
+    role = str(message.get("role", ""))
+
+    mapping: dict[str, str] = {
+        "session": "run_started",
+        "agent_start": "run_started",
+        "agent_end": "run_completed",
+        "agent_settled": "run_completed",
+        "turn_start": "turn_started",
+        "turn_end": "turn_completed",
+        "tool_execution_start": "tool_call",
+        "tool_execution_end": "tool_result",
+        "auto_retry_start": "retry",
+        "compaction_start": "compaction",
+    }
+
+    # A failed call arrives as a `message_end` whose assistant message carries
+    # `errorMessage` and no content. This is checked first: filing it by role
+    # would report a run that never reached the model as an answered one.
+    error = message.get("errorMessage")
+    if error or event_type == "error":
+        normalized_type = "error"
+    elif event_type in {"message_start", "message_end"}:
+        # What a message *is* comes from its role, not from the envelope. The
+        # same event type carries the prompt, the assistant's answer and a tool
+        # result, so a mapping keyed on the type alone cannot tell them apart --
+        # an earlier version had both, the dictionary won, and every user
+        # message was filed as an unclassified provider event.
+        normalized_type = {
+            "assistant": "agent_message",
+            "tool": "tool_result",
+            "user": "prompt",
+        }.get(role, "provider_event")
+    else:
+        normalized_type = mapping.get(event_type, "provider_event")
+
+    return _event(
+        normalized_type,
+        seq=seq,
+        agent_id=agent_id,
+        payload={
+            "source_type": event_type,
+            "role": role or None,
+            "stop_reason": message.get("stopReason"),
+            "error": str(error) if error else None,
+            "content": _pi_content_text(message.get("content")),
+            "usage": message.get("usage") if isinstance(message.get("usage"), Mapping) else None,
+            "raw": dict(event),
+        },
+    )
+
+
+def _pi_content_text(content: Any) -> str:
+    """Flatten a pi content-block list into the text it carries.
+
+    Blocks are `{type: "text", text: ...}` and tool calls; joining the text
+    blocks gives a reader the same sentences pi showed, without reaching into
+    the rest of the structure.
+    """
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, (list, tuple)):
+        return ""
+    parts = [
+        str(block.get("text"))
+        for block in content
+        if isinstance(block, Mapping) and block.get("type") == "text" and block.get("text")
+    ]
+    return "\n".join(parts)
 
 
 def normalize_dsh_acp_message(
@@ -159,6 +260,8 @@ def normalize_event_lines(
         seq = len(normalized)
         if adapter == "codex":
             event = normalize_codex_event(value, seq=seq, agent_id=agent_id)
+        elif adapter == "pi":
+            event = normalize_pi_event(value, seq=seq, agent_id=agent_id)
         elif adapter in {"dsh", "dsh-acp"}:
             # The DSH entrypoint may wrap raw ACP messages in an envelope so
             # logs can identify their source without changing protocol stdout.
