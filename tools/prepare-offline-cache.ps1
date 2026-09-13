@@ -160,7 +160,10 @@ function Get-ImageRecord([string]$Image) {
 }
 
 $records = @()
-foreach ($image in @($PythonBaseImage, $NodeBaseImage, "ai-native-llm-gateway:local", "ai-native-codex-agent:local", "ai-native-codex-agent:all-mcp")) {
+# The evaluation images that exist after the single-image change. The retired
+# `ai-native-codex-agent:all-mcp` variant is gone, and listing it here only
+# produced a silent no-op that read as if it were still part of the cache.
+foreach ($image in @($PythonBaseImage, $NodeBaseImage, "ai-native-llm-gateway:local", "ai-native-codex-agent:local", "ai-native-dsh-agent:release")) {
     & wsl.exe -d $Distro -- docker image inspect $image *> $null
     if ($LASTEXITCODE -eq 0) { $records += Get-ImageRecord $image }
 }
