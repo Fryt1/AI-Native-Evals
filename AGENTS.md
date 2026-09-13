@@ -91,7 +91,8 @@ pwsh -File tools/check-git-hygiene.ps1
 ```
 ## Eval Console rules
 
-- `src/ai_native_evals_console/` is a projection-first API boundary: reads are the default, and the only write path is the explicit run-launch flow (`POST /api/v1/run-plans`). Evaluation modules must not import it; the top-level CLI may dispatch the optional console command.
+- `src/ai_native_evals_console/` is a projection-first API boundary: reads are the default, and every state-changing endpoint is an explicit action rather than a side effect of a read. The full list is in `docs/EVAL_CONSOLE_SPEC.md` §25.1; add to it when you add one. Evaluation modules must not import it (`tests/test_console_api.py` walks every owned module and enforces this); the top-level CLI is the only exception, dispatching the optional console command.
+- An artifact's media type is decided by the Console, never by the run. A run's workspace and its `artifacts/manifest.json` are written by the evaluated Agent, so a declared `mime_type` is subject input: types a browser executes as a document are downgraded before they are served.
 - `apps/eval-console/` is the only formal UI. It calls `/api/v1` and must not read EvalRuns or provider-specific Codex/DSH logs directly. Its source is tracked; `dist/` and the copied `src/ai_native_evals_console/static/` are build output.
 - `apps/eval-console` is a pnpm workspace member declared in the root `pnpm-workspace.yaml`. Keep the root `pnpm install` working: without that file the root manifest has no dependencies, so pnpm reports success and installs nothing.
 - EvalRuns remain the source of truth. `EvalRuns/.console/catalog.sqlite` is a rebuildable index and must not be committed.

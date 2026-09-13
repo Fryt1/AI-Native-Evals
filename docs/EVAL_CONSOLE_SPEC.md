@@ -1308,8 +1308,32 @@ UI 测试不得调用真实模型、Docker、Blender 或 UE5。
 - API 响应不包含 API Key、Provider Token、完整 `.env`
 - 原始 Event Payload 输出前经过秘密字段过滤
 - HTML / Markdown 预览默认转义，不执行脚本
-- 图片使用受控 MIME 类型
+- 图片使用受控 MIME 类型：Artifact 来自被测 Agent 可写的 Workspace，因此
+  文件名和 `artifacts/manifest.json` 都是被评测方的输入。`text/html`、
+  `image/svg+xml`、`application/xhtml+xml` 等浏览器会当作活动文档执行的类型
+  一律降级为 `application/octet-stream`，MIME 不由 Run 自己声明
 - Console v1 默认仅监听 `127.0.0.1`
+
+## 25.1 写路径清单
+
+"读取优先"不等于"只有一条写路径"。会改变机器状态的端点仅限以下几处，且都必须
+是显式动作，不是读取的副作用：
+
+```text
+POST /api/v1/run-plans                 解析计划，不启动任何东西
+POST /api/v1/run-plans/{id}/execute    启动真实 Docker Run
+POST /api/v1/runs                      同上，直接创建
+POST /api/v1/preflight                 在 runs_root 写入并删除探测文件
+POST /api/v1/agents/{id}/check         启动真实容器与 Docker network
+POST /api/v1/admin/reindex             重建 SQLite 索引
+```
+
+除此之外，`GET` 系列在索引过期时会**重建索引**（`catalog.ensure_current`）。
+索引是可重建的派生数据，不是 Run 事实，因此这是允许的——但它意味着"只读请求"
+仍会触碰 `EvalRuns/.console/`。
+
+默认只监听回环地址；一旦用 `--host 0.0.0.0` 暴露，上述端点全部对网络开放，
+当前**没有**认证、CSRF 或 Origin 校验。
 
 ## 26. 实施阶段
 

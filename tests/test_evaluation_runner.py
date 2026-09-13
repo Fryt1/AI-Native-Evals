@@ -282,25 +282,17 @@ def test_measured_failure_is_still_a_definitive_fail(tmp_path: Path) -> None:
     assert report["outcome_score"] == 0.0
 
 
-@pytest.mark.parametrize(
-    ("on_error", "expected_status", "expected_decision", "expected_outcome"),
-    [
-        ("fail", "error", "fail", 0.0),
-        ("review", "review", "review", None),
-        ("skip", "skipped", "review", None),
-    ],
-)
-def test_hard_check_that_cannot_run_follows_on_error_policy(
-    tmp_path: Path,
-    on_error: str,
-    expected_status: str,
-    expected_decision: str,
-    expected_outcome: float | None,
-) -> None:
-    """A crashed evaluator must not be recorded as a normal 0 score.
+@pytest.mark.parametrize("on_error", ["fail", "review", "skip"])
+def test_crashing_evaluator_never_scores_the_agent(tmp_path: Path, on_error: str) -> None:
+    """Our own crash must not be recorded as the Agent failing.
 
-    With on_error=review or skip the verdict is undetermined, so the score is
-    unavailable rather than a fabricated zero that would read as Agent failure.
+    `on_error` describes a *check* that could not run. An evaluator that raises is
+    a defect in this repository, so no policy can turn it into a verdict about the
+    Agent -- including `on_error: fail`, which both shipped Tasks declare and
+    which previously produced `outcome_score: 0.0` and a hard `fail` here.
+
+    The status stays `error` under every policy: rewriting it to `skipped` or
+    `review` would claim the TestPlan chose something it did not.
     """
     run_dir, _ = _manifest(
         tmp_path,
@@ -310,6 +302,53 @@ def test_hard_check_that_cannot_run_follows_on_error_policy(
                     "id": "must-work",
                     "phase": "outcome",
                     "evaluator": "test.crashes.v1",
+                    "on_error": on_error,
+                    # Left required: the point is that even a hard check cannot
+                    # convert an internal fault into an Agent failure.
+                    "required": True,
+                }
+            ]
+        },
+    )
+
+    report = runner.evaluate_run(run_dir)
+
+    assert report["checks"][0]["status"] == "error"
+    assert report["checks"][0]["details"]["evaluator_fault"] is True
+    assert report["decision"] == "review"
+    assert report["outcome_score"] is None
+
+
+@pytest.mark.parametrize(
+    ("on_error", "expected_status", "expected_decision", "expected_outcome"),
+    [
+        ("fail", "error", "fail", 0.0),
+        ("review", "review", "review", None),
+        ("skip", "skipped", "review", None),
+    ],
+)
+def test_check_that_cannot_configure_follows_on_error_policy(
+    tmp_path: Path,
+    on_error: str,
+    expected_status: str,
+    expected_decision: str,
+    expected_outcome: float | None,
+) -> None:
+    """A check whose *config* the evaluator rejects still follows `on_error`.
+
+    This is the case `on_error` is for: the evaluator ran and reported that this
+    check is unusable, which is a fact about the TestPlan and may honestly be read
+    as a failure by the Task author who wrote it.
+    """
+    run_dir, _ = _manifest(
+        tmp_path,
+        {
+            "checks": [
+                {
+                    "id": "must-work",
+                    "phase": "outcome",
+                    "evaluator": "script.file_exists.v1",
+                    # No path: a definite, reportable configuration error.
                     "on_error": on_error,
                 }
             ]
@@ -389,5 +428,214 @@ def test_unregistered_evaluator_honours_on_error_policy(tmp_path: Path) -> None:
     )
 
     assert report["checks"][0]["status"] == "review"
+    assert report["decision"] == "review"
+    assert report["outcome_score"] is None
+
+
+# --------------------------------------------------------------------------
+# `required` and `pass` must mean the same thing in every phase.
+# --------------------------------------------------------------------------
+
+
+def test_required_quality_check_is_a_hard_check(tmp_path: Path) -> None:
+    """`required: true` on a Judge must fail the Run, not just be recorded.
+
+    It previously selected hard checks as `required and phase == "outcome"`, so a
+    required Judge that answered `fail` was persisted as `failed` and the Run was
+    still reported as `pass`.
+    """
+    from ai_native_evals.plans import TestPlan
+
+    plan = TestPlan.from_mapping(
+        {
+            "checks": [
+                {"id": "exists", "phase": "outcome", "evaluator": "script.file_exists.v1"},
+                {
+                    "id": "judge",
+                    "phase": "quality",
+                    "evaluator": "agent.quality_judge.v1",
+                    "required": True,
+                },
+            ]
+        }
+    )
+
+    assert set(plan.hard_checks) == {"exists", "judge"}
+
+
+def test_failed_required_judge_fails_the_run_without_a_threshold(tmp_path: Path) -> None:
+    """A Judge that answers `fail` decides the Run with no quality_threshold set."""
+    run_dir, manifest = _manifest(
+        tmp_path,
+        {
+            "checks": [
+                {
+                    "id": "exists",
+                    "phase": "outcome",
+                    "evaluator": "script.file_exists.v1",
+                    "input": {"path": "/workspace/output/result.txt"},
+                },
+                {
+                    "id": "judge",
+                    "phase": "quality",
+                    "evaluator": "agent.quality_judge.v1",
+                    "required": True,
+                    "input": {"artifact": "exists.path"},
+                    "config": {
+                        "prompt": "prompts/quality/text-artifact-v1.md",
+                        "rubric": "config/rubrics/hello-world.yaml",
+                    },
+                    "depends_on": ["exists"],
+                },
+            ]
+        },
+    )
+    Path(manifest["paths"]["output"]).joinpath("result.txt").write_text("ok", encoding="utf-8")
+
+    trace = Path(manifest["paths"]["trace"]) / "judge"
+    trace.mkdir(parents=True, exist_ok=True)
+    last = trace / "last.txt"
+    # A high score with a definite `fail`: the numeric average alone would pass,
+    # which is exactly the hole this closes.
+    last.write_text(
+        json.dumps({"status": "fail", "score": 0.9, "rationale": "rubric row failed"}),
+        encoding="utf-8",
+    )
+    _stub_evaluator_agent(runner, trace, last)
+
+    report = runner.evaluate_run(run_dir)
+
+    judge = next(item for item in report["checks"] if item["check_id"] == "judge")
+    assert judge["status"] == "failed"
+    assert report["quality_score"] == 0.9
+    assert report["decision"] == "fail"
+
+
+def _stub_evaluator_agent(target, trace: Path, last: Path) -> None:  # type: ignore[no-untyped-def]
+    """Point the evaluator Agent at a canned last message."""
+
+    def fake(*args, **kwargs):  # type: ignore[no-untyped-def]
+        return EvaluatorAgentResult(
+            run_id="test-run",
+            role="quality-judge-judge",
+            status="completed",
+            exit_code=0,
+            started_at="",
+            finished_at="",
+            trace_dir=trace,
+            log_path=trace / "agent-container.log",
+            last_message_path=last,
+            output_path=None,
+        )
+
+    target.run_evaluator_agent = fake  # type: ignore[assignment]
+
+
+def test_ambiguous_locator_is_undetermined_not_a_failure(tmp_path: Path) -> None:
+    """The Locator's own `review` answer must not become an Agent failure.
+
+    Its prompt tells it to answer `review` when the artifact is ambiguous. That is
+    a statement about the measurement, but it was routed through `_error_result`,
+    inherited `on_error: fail`, and was recorded as a determinate failure with
+    `outcome_score: 0.0` -- the Agent blamed for a question nobody answered.
+    """
+    run_dir, manifest = _manifest(
+        tmp_path,
+        {
+            "checks": [
+                {
+                    "id": "locate",
+                    "phase": "outcome",
+                    "evaluator": "agent.artifact_locator.v1",
+                    "input": {"roots": ["/workspace/output"]},
+                    "config": {"expected_name": "hello.txt"},
+                    "required": True,
+                    "on_error": "fail",
+                }
+            ]
+        },
+    )
+    Path(manifest["paths"]["output"]).joinpath("hello.txt").write_text("ok", encoding="utf-8")
+
+    trace = Path(manifest["paths"]["trace"]) / "locator"
+    trace.mkdir(parents=True, exist_ok=True)
+    last = trace / "last.txt"
+    last.write_text(
+        json.dumps(
+            {
+                "status": "review",
+                "selected_artifact": None,
+                "candidates": [],
+                "reason": "two candidates match",
+            }
+        ),
+        encoding="utf-8",
+    )
+    _stub_evaluator_agent(runner, trace, last)
+
+    report = runner.evaluate_run(run_dir)
+
+    assert report["checks"][0]["status"] == "review"
+    assert report["checks"][0]["score"] is None
+    assert report["decision"] == "review"
+    assert report["outcome_score"] is None
+
+
+def test_locator_not_found_is_still_a_failure(tmp_path: Path) -> None:
+    """`not_found` is a real answer, and stays a determinate failure."""
+    run_dir, manifest = _manifest(
+        tmp_path,
+        {
+            "checks": [
+                {
+                    "id": "locate",
+                    "phase": "outcome",
+                    "evaluator": "agent.artifact_locator.v1",
+                    "input": {"roots": ["/workspace/output"]},
+                    "config": {"expected_name": "hello.txt"},
+                    "on_error": "fail",
+                }
+            ]
+        },
+    )
+
+    trace = Path(manifest["paths"]["trace"]) / "locator"
+    trace.mkdir(parents=True, exist_ok=True)
+    last = trace / "last.txt"
+    last.write_text(
+        json.dumps({"status": "not_found", "selected_artifact": None, "candidates": []}),
+        encoding="utf-8",
+    )
+    _stub_evaluator_agent(runner, trace, last)
+
+    report = runner.evaluate_run(run_dir)
+
+    assert report["checks"][0]["status"] == "error"
+    assert report["decision"] == "fail"
+    assert report["outcome_score"] == 0.0
+
+
+def test_telemetry_only_plan_cannot_pass(tmp_path: Path) -> None:
+    """A Plan with no outcome check cannot support a `pass`.
+
+    Process telemetry describes how the work was done, never whether it was done.
+    Such a Run used to report `decision: pass` with every score null.
+    """
+    report = runner.evaluate_run(
+        _manifest(
+            tmp_path,
+            {
+                "checks": [
+                    {
+                        "id": "process",
+                        "phase": "process",
+                        "evaluator": "trace.process_analyzer.v1",
+                        "required": False,
+                    }
+                ]
+            },
+        )[0]
+    )
+
     assert report["decision"] == "review"
     assert report["outcome_score"] is None

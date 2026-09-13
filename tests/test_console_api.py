@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import time
 from pathlib import Path
@@ -104,6 +105,110 @@ def test_catalog_and_api_hide_host_paths_and_serve_artifacts(tmp_path: Path) -> 
     assert content.status_code == 200
     assert '"ok": true' in content.text
     assert client.get("/api/v1/runs/run-1/artifacts/../../secret").status_code in {404, 422}
+
+
+def test_subject_declared_mime_cannot_serve_active_content(tmp_path: Path) -> None:
+    """A run must not be able to serve itself as same-origin script.
+
+    `artifacts/manifest.json` lives in the workspace the evaluated Agent writes,
+    and `mime_type` from it was used verbatim as the response `Content-Type`.
+    Declaring `text/html` therefore made the Console execute the run's own file.
+    """
+    run_dir = _write_run(tmp_path)
+    artifacts_dir = run_dir / "workspace" / "artifacts"
+    artifacts_dir.mkdir(parents=True)
+    (artifacts_dir / "evil.html").write_text(
+        "<script>alert(document.domain)</script>", encoding="utf-8"
+    )
+    (artifacts_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "artifacts": [
+                    {
+                        "relative_path": "artifacts/evil.html",
+                        "role": "subject_output",
+                        "mime_type": "text/html",
+                        "previewable": True,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    client = TestClient(create_app(repo_root=tmp_path, runs_root=tmp_path))
+
+    items = client.get("/api/v1/runs/run-1/artifacts").json()["items"]
+    evil = next(item for item in items if item["relative_path"].endswith("evil.html"))
+    response = client.get(f"/api/v1/runs/run-1/artifacts/{evil['artifact_id']}")
+
+    assert response.status_code == 200
+    served = response.headers["content-type"].split(";")[0]
+    assert served not in {"text/html", "image/svg+xml", "application/xhtml+xml"}
+    assert served == "application/octet-stream"
+
+
+def test_svg_artifact_is_not_served_as_an_image(tmp_path: Path) -> None:
+    """SVG is scriptable, so it must not ride the image/* path."""
+    run_dir = _write_run(tmp_path)
+    output = run_dir / "workspace" / "output"
+    (output / "diagram.svg").write_text("<svg onload='alert(1)'/>", encoding="utf-8")
+    client = TestClient(create_app(repo_root=tmp_path, runs_root=tmp_path))
+
+    items = client.get("/api/v1/runs/run-1/artifacts").json()["items"]
+    svg = next(item for item in items if item["relative_path"].endswith(".svg"))
+    response = client.get(f"/api/v1/runs/run-1/artifacts/{svg['artifact_id']}")
+
+    assert response.headers["content-type"].split(";")[0] == "application/octet-stream"
+
+
+def test_events_do_not_leak_host_paths(tmp_path: Path) -> None:
+    """The events endpoint returned raw trace payloads, host paths included."""
+    run_dir = _write_run(tmp_path, normalized=False)
+    host_path = str(run_dir / "workspace" / "output" / "scene.blend")
+    (run_dir / "workspace" / "trace" / "normalized-events.jsonl").write_text(
+        json.dumps(
+            {
+                "seq": 0,
+                "type": "file_changed",
+                "agent_id": "codex",
+                "payload": {"path": host_path, "posix": "/home/runner/.codex/auth.json"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (run_dir / "workspace" / "trace" / "digest.json").unlink()
+
+    response = TestClient(create_app(repo_root=tmp_path, runs_root=tmp_path)).get(
+        "/api/v1/runs/run-1/events"
+    )
+
+    assert response.status_code == 200
+    assert str(tmp_path) not in response.text
+    assert "/home/runner" not in response.text
+
+
+def test_registry_reports_profiles_without_host_paths(tmp_path: Path) -> None:
+    """`/registry` passed the loader's absolute `source_path` to the browser."""
+    repo = tmp_path / "repo"
+    (repo / "profiles" / "providers").mkdir(parents=True)
+    (repo / "profiles" / "providers" / "relay.yaml").write_text(
+        "id: relay\nname: Relay\nmodels:\n  - id: m\n", encoding="utf-8"
+    )
+    (repo / "config").mkdir(parents=True)
+    (repo / "config" / "eval.yaml").write_text(
+        "profile_roots:\n  providers: profiles/providers\n", encoding="utf-8"
+    )
+    client = TestClient(create_app(repo_root=repo, runs_root=tmp_path / "runs"))
+
+    response = client.get("/api/v1/registry")
+
+    assert response.status_code == 200
+    assert str(tmp_path) not in response.text
+    providers = response.json()["providers"]
+    relay = next(item for item in providers if item["id"] == "relay")
+    # Relative to the repository, which is what the UI needs and all it should get.
+    assert relay["path"] == "profiles/providers/relay.yaml"
 
 
 def test_digest_timeline_is_a_legacy_trace_fallback(tmp_path: Path) -> None:
@@ -226,6 +331,14 @@ def test_evaluation_digest_checks_endpoints_return_sanitized_views(tmp_path: Pat
 
 
 def test_evaluation_modules_do_not_depend_on_console() -> None:
+    """No module the evaluator owns may import the Console projection layer.
+
+    This scanned eight subpackages and missed the top-level modules beside them --
+    which is where `preflight.py` reached into `ai_native_evals_console.paths`, so
+    the rule was broken for as long as the test existed and the test could not
+    see it. It now walks every owned module, and names the package by its own
+    import rather than by a string that a comment can trip over.
+    """
     root = Path(__file__).parents[1] / "src" / "ai_native_evals"
     owned_modules = (
         "agents",
@@ -236,10 +349,33 @@ def test_evaluation_modules_do_not_depend_on_console() -> None:
         "sandboxes",
         "scorers",
         "solvers",
+        "tasks",
     )
-    for module in owned_modules:
-        for path in (root / module).rglob("*.py"):
-            assert "ai_native_evals_console" not in path.read_text(encoding="utf-8"), path
+    owned_files = [path for module in owned_modules for path in (root / module).rglob("*.py")]
+    # The top-level modules (cli, preflight, providers, plans, mcp, ...), which
+    # the original scan skipped.
+    owned_files += [path for path in root.glob("*.py")]
+    assert len(owned_files) > 50, "the scan is not finding the owned modules"
+
+    offenders = []
+    for path in owned_files:
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                names = [node.module or ""]
+            else:
+                continue
+            if any(name.split(".")[0] == "ai_native_evals_console" for name in names):
+                offenders.append(f"{path.relative_to(root.parent.parent)}:{node.lineno}")
+
+    # The CLI is the documented exception: it may dispatch the optional console
+    # command. It is also a top-level module, so it must be excluded by path.
+    cli = str(Path("src") / "ai_native_evals" / "cli.py")
+    offenders = [item for item in offenders if not item.startswith(cli)]
+    assert not offenders, f"evaluation modules import the Console: {offenders}"
 
 
 def test_run_plan_resolves_existing_selectors_without_creating_a_run() -> None:

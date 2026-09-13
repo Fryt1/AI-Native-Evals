@@ -113,7 +113,18 @@ def resolve_run(
     defaults = _mapping(config, "defaults")
     paths = _mapping(config, "paths")
     agents = _merge_named_profile_source(repo_root, config, "agents")
-    model_profiles = _merge_named_profile_source(repo_root, config, "model_profiles")
+    model_profiles = _merge_named_profile_source(
+        repo_root,
+        config,
+        "model_profiles",
+        # The config key is `models` (see profile_roots in config/eval.yaml) while
+        # the inline section this loader was named after is `model_profiles`.
+        # Without this the resolver read `profile_roots.model_profiles`, so a
+        # machine that pointed `profile_roots.models` elsewhere had its model
+        # directory honored by `model list` and ignored by every actual run.
+        profile_root_key="models",
+        default_root="profiles/models",
+    )
     mcp_profiles = _merge_named_profile_source(
         repo_root,
         config,
@@ -555,17 +566,20 @@ def _merge_named_profile_source(
     profile_root_key: str | None = None,
     default_root: str | None = None,
 ) -> dict[str, Any]:
-    """Load profile files from the configured root directory."""
+    """Load profile files from the configured root directory.
+
+    The single implementation of "where do profiles of this kind live": every
+    caller passes the root key its own configuration section uses, rather than
+    pre-merging an overlay it read for itself.
+    """
     merged: dict[str, Any] = {}
-    profile_roots = _mapping(config, "profile_roots")
-    root_key = profile_root_key or inline_key
-    fallback_root = default_root or (
-        "profiles/agents" if inline_key == "agents" else "profiles/models"
+    root = resolve_profile_root(
+        repo_root,
+        config,
+        profile_root_key or inline_key,
+        default_root=default_root
+        or ("profiles/agents" if inline_key == "agents" else "profiles/models"),
     )
-    raw_root = profile_roots.get(root_key, fallback_root)
-    root = Path(str(raw_root))
-    if not root.is_absolute():
-        root = repo_root / root
     if root.is_dir():
         for path in sorted((*root.glob("*.yaml"), *root.glob("*.yml"))):
             payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
@@ -679,6 +693,54 @@ def _substitute_mcp_values(value: Any, variables: dict[str, str]) -> Any:
     if isinstance(value, dict):
         return {key: _substitute_mcp_values(item, variables) for key, item in value.items()}
     return value
+
+
+def resolve_runs_root(
+    repo_root: Path,
+    config: Mapping[str, Any],
+    *,
+    override: Path | None = None,
+) -> Path:
+    """Where runs are written: the override, ``paths.runs_root``, or the default.
+
+    Lives here, beside :func:`resolve_run`, because the evaluator must not reach
+    into the Console package to learn where its own runs go. ``preflight`` used to
+    do exactly that, which put a dependency on the projection layer inside the
+    evaluation layer.
+    """
+    if override is not None:
+        return override.expanduser().resolve()
+    paths = _mapping(config, "paths")
+    raw = paths.get("runs_root")
+    if isinstance(raw, str) and raw:
+        candidate = Path(raw)
+        if not candidate.is_absolute():
+            candidate = repo_root / candidate
+        return candidate.resolve()
+    return (repo_root / ".." / "EvalRuns").resolve()
+
+
+def resolve_profile_root(
+    repo_root: Path,
+    config: Mapping[str, Any],
+    kind: str,
+    *,
+    default_root: str | None = None,
+) -> Path:
+    """Resolve ``profile_roots.<kind>`` to a directory.
+
+    One resolver for every consumer. The CLI, the Console registry and the Agent
+    profile loader each grew their own copy of these four lines, and a change to
+    how a root is spelled reached whichever copy the author happened to be
+    looking at.
+    """
+    roots = _mapping(config, "profile_roots")
+    raw = roots.get(kind)
+    fallback = default_root or f"profiles/{kind}"
+    candidate = Path(str(raw)) if isinstance(raw, str) and raw else Path(fallback)
+    if not candidate.is_absolute():
+        candidate = repo_root / candidate
+    return candidate.resolve()
 
 
 def _mapping(value: Mapping[str, Any], key: str) -> dict[str, Any]:

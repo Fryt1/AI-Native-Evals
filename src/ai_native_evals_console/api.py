@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import mimetypes
 import re
 from collections.abc import Mapping
 from contextlib import asynccontextmanager
@@ -37,6 +38,9 @@ from .read_models import (
     run_evaluation,
     run_events,
 )
+
+#: Largest artifact served inline as text. Larger files are a download.
+_MAX_INLINE_PREVIEW_BYTES = 25_000_000
 
 
 class RunPlanRequest(BaseModel):
@@ -104,6 +108,22 @@ class AgentCheckRequest(BaseModel):
     version: str = Field(default="", max_length=120)
 
 
+def _safe_artifact_media_type(path: Path, declared: str) -> str:
+    """The media type the browser may be told, given a subject-controlled file.
+
+    Artifacts come out of a workspace the evaluated Agent could write to, so both
+    the filename and the run's own `artifacts/manifest.json` are subject input.
+    Anything the browser would *execute* or evaluate as a document -- HTML, SVG,
+    XML, XHTML -- is served as an opaque download instead. Everything else keeps
+    its declared type, which is what makes JSON and text previews readable.
+    """
+    guessed = mimetypes.guess_type(path.name)[0] or ""
+    candidate = (declared or guessed or "application/octet-stream").split(";")[0].strip().lower()
+    if candidate in _ACTIVE_MEDIA_TYPES or candidate.endswith(("+xml", "/xml")):
+        return "application/octet-stream"
+    return candidate or "application/octet-stream"
+
+
 def _sanitize_artifact_text(content: str, runs_root: Path, artifact_path: Path) -> str:
     """Remove host filesystem paths from text shown or downloaded by the browser."""
     run_dir = artifact_path
@@ -120,8 +140,11 @@ def _sanitize_artifact_text(content: str, runs_root: Path, artifact_path: Path) 
     for source, target in replacements.items():
         content = content.replace(source, target)
     # JSONL and JSON often contain escaped Windows paths; keep the preview useful
-    # without exposing a machine-specific drive path.
-    content = re.sub(r"[A-Za-z]:\\\\(?:\\\\.|[^\"\n])+", "<host-path>", content)
+    # without exposing a machine-specific drive path. The pattern allows an
+    # escaped backslash, but does not *require* one -- it previously did, so a
+    # plain `C:\Users\me\scene.blend` inside a JSON event slipped through while
+    # the same path with doubled separators was redacted.
+    content = re.sub(r"[A-Za-z]:\\(?:\\|\\.|[^\"\n])*", "<host-path>", content)
     return content
 
 
@@ -240,14 +263,20 @@ def create_app(
 
     @app.get("/api/v1/preflight")
     def latest_preflight() -> dict[str, Any]:
-        """The most recent check, so a reload does not lose the result."""
-        value = checks.latest()
-        if value is None:
-            raise HTTPException(status_code=404, detail="No environment check has run yet")
-        return value
+        """The most recent check, so a reload does not lose the result.
+
+        Returns `{"check": null}` when nothing has run yet, rather than 404. A
+        first visit is a normal state, not a failure: the browser logs a red
+        error for every 4xx, so expressing "nothing yet" as 404 put a console
+        error on the page for every new user, and made this endpoint disagree
+        with `/agents/checks`, which answers the same question with an empty
+        result.
+        """
+        return {"check": checks.latest()}
 
     @app.get("/api/v1/preflight/{check_id}")
     def get_preflight(check_id: str) -> dict[str, Any]:
+        """One check by id. A missing id is a genuine 404: it was asked for."""
         value = checks.get(check_id)
         if value is None:
             raise HTTPException(status_code=404, detail="Environment check not found or expired")
@@ -416,7 +445,7 @@ def create_app(
         if value is None:
             raise HTTPException(status_code=404, detail="Artifact not found")
         artifact, path = value
-        mime = str(artifact.get("mime_type") or "application/octet-stream")
+        mime = _safe_artifact_media_type(path, str(artifact.get("mime_type") or ""))
         disposition = "attachment" if download else "inline"
         filename = Path(str(artifact.get("relative_path") or path.name)).name
         if mime.startswith("text/") or mime in {
@@ -425,6 +454,19 @@ def create_app(
             "application/yaml",
         }:
             try:
+                # Bounded like the legacy scan: a run's workspace is subject
+                # input, and reading whatever size it declares into one response
+                # is a memory limit the subject gets to choose. Over the cap the
+                # caller is told to download instead.
+                size = path.stat().st_size
+                if size > _MAX_INLINE_PREVIEW_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=(
+                            f"artifact is {size} bytes; "
+                            "use ?download=true to retrieve it"
+                        ),
+                    )
                 content = path.read_text(encoding="utf-8", errors="replace")
             except OSError as exc:
                 raise HTTPException(status_code=404, detail="Artifact cannot be read") from exc

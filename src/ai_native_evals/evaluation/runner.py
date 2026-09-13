@@ -199,13 +199,19 @@ def _execute_check(context: EvaluationContext, check: CheckSpec) -> CheckResult:
     try:
         result = evaluator(context, check)
     except Exception as exc:  # evaluator boundary: keep the plan report durable
-        status = {"review": "review", "skip": "skipped"}.get(check.on_error, "error")
+        # An unhandled exception here is a bug in the evaluator, not a finding
+        # about the Agent. Letting it inherit `on_error` let a Task that declares
+        # `on_error: fail` -- which both shipped Tasks do, for a Locator that can
+        # return without an answer -- record our own crash as the Agent scoring
+        # zero. It stays `error`, flagged as ours, and `_effective_status` reads
+        # that as undetermined whatever the check's policy says.
         return CheckResult(
             check_id=check.id,
             phase=check.phase,
             evaluator=check.evaluator,
-            status=status,  # type: ignore[arg-type]
-            error=f"{type(exc).__name__}: {exc}",
+            status="error",
+            details={"evaluator_fault": True},
+            error=f"evaluator raised {type(exc).__name__}: {exc}",
             started_at=started,
             finished_at=_utc_now(),
         )
@@ -221,13 +227,19 @@ def _effective_status(result: CheckResult, plan: TestPlan) -> str:
     """Collapse a CheckResult into the verdict it carries for aggregation.
 
     The distinction that decides a run is *determinate negative* versus
-    *undetermined*. An evaluator that crashed, a dependency that never ran, or a
-    check the task chose to skip tells us nothing about the Agent, so it must not
-    be silently reported as a failed check. ``on_error`` decides how an
-    evaluator-level failure is read; ``skip`` removes it from the verdict
-    entirely.
+    *undetermined*. An evaluator that could not reach an answer, a dependency that
+    never ran, or a check the task chose to skip tells us nothing about the Agent,
+    so it must not be silently reported as a failed check.
+
+    ``on_error`` says how a check that **could not run** is read. It deliberately
+    does not cover an evaluator that raised: that is a defect in this repository,
+    and reading it as an Agent failure would let our own bug score a run. Such a
+    result carries ``details["evaluator_fault"]`` and is undetermined regardless
+    of policy.
     """
     if result.status == "error":
+        if result.details.get("evaluator_fault"):
+            return "error"
         check = next((item for item in plan.checks if item.id == result.check_id), None)
         policy = check.on_error if check is not None else "fail"
         return {"fail": "failed", "review": "review", "skip": "skipped"}[policy]
@@ -284,6 +296,16 @@ def _aggregate(context: EvaluationContext, checks: list[CheckResult]) -> Evaluat
         not determinate
         or any(status in {"review", "blocked", "error"} for status in effective.values())
     )
+    # `pass` is a claim about the Agent, so it needs at least one determinate
+    # verdict on the Agent's *output*. Process telemetry describes how the work
+    # was done and says nothing about whether it was done, so a plan that checks
+    # only the trace cannot support a pass -- it was previously reported as one
+    # with every score null.
+    has_outcome_verdict = any(
+        effective.get(result.check_id) in {"passed", "failed"}
+        for result in checks
+        if result.phase == "outcome"
+    )
 
     if hard_failures:
         decision = "fail"
@@ -293,7 +315,7 @@ def _aggregate(context: EvaluationContext, checks: list[CheckResult]) -> Evaluat
         and quality_score < plan.quality_threshold
     ):
         decision = "fail"
-    elif undetermined:
+    elif undetermined or not has_outcome_verdict:
         decision = plan.uncertain_result
     else:
         decision = "pass"
@@ -681,6 +703,29 @@ def _artifact_locator(context: EvaluationContext, check: CheckSpec) -> CheckResu
             result.failure_message or f"locator Agent exited with {result.exit_code}",
         )
     locator_status = payload.get("status") if isinstance(payload, dict) else None
+    if locator_status == "review":
+        # The Locator's own prompt tells it to answer `review` when the artifact
+        # is ambiguous, and that answer is a statement about the *measurement*,
+        # not about the Agent. Routing it through `_error_result` made it inherit
+        # `on_error`, and with the `on_error: fail` that both shipped Tasks use it
+        # became a determinate failure -- an Agent credited with scoring zero for
+        # a question nobody managed to answer. Report it as undetermined.
+        return CheckResult(
+            check_id=check.id,
+            phase=check.phase,
+            evaluator=check.evaluator,
+            status="review",
+            passed=None,
+            score=None,
+            details={"locator": payload, "locator_agent": result.to_dict()},
+            evidence_refs=(str(result.last_message_path),),
+            error=(
+                "locator could not identify an unambiguous artifact: "
+                f"{payload.get('reason') or 'no reason given'}"
+            ),
+            started_at=started,
+            finished_at=_utc_now(),
+        )
     if locator_status not in {"found", "pass"}:
         return _error_result(
             check,

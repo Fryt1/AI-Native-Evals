@@ -86,16 +86,25 @@ def test_result_survives_a_reload(tmp_path: Path) -> None:
     latest = client.get("/api/v1/preflight")
 
     assert latest.status_code == 200
-    assert latest.json()["check_id"] == check_id
+    assert latest.json()["check"]["check_id"] == check_id
 
 
 def test_unknown_check_id_is_404(tmp_path: Path) -> None:
+    """A specific id that does not exist is a genuine 404: it was asked for."""
     assert _client(tmp_path).get("/api/v1/preflight/check-nope").status_code == 404
 
 
-def test_no_check_yet_is_404_not_an_error(tmp_path: Path) -> None:
-    """A first visit has nothing to show; that is not a failure."""
-    assert _client(tmp_path).get("/api/v1/preflight").status_code == 404
+def test_no_check_yet_is_an_empty_result_not_an_error(tmp_path: Path) -> None:
+    """A first visit has nothing to show, and that is not a failure.
+
+    It used to answer 404, which put a red console error on the page for every
+    new visitor and made this endpoint disagree with `/agents/checks`, whose
+    answer to "what has run so far" is an empty result rather than an error.
+    """
+    response = _client(tmp_path).get("/api/v1/preflight")
+
+    assert response.status_code == 200
+    assert response.json() == {"check": None}
 
 
 def test_an_identical_selector_is_not_re_probed(tmp_path: Path) -> None:

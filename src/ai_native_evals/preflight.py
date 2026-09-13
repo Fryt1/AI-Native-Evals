@@ -495,10 +495,11 @@ def check_mcp_hosts(spec: object | None, *, timeout: float = 3.0) -> Check:
 
 def check_runs_root(repo_root: Path) -> Check:
     """Where runs are written must be creatable and writable."""
-    try:
-        from ai_native_evals_console.paths import resolve_runs_root
+    from .runs.resolver import load_config, resolve_runs_root
 
-        runs_root = resolve_runs_root(repo_root, config_path=repo_root / "config" / "eval.yaml")
+    try:
+        config = load_config(repo_root / "config" / "eval.yaml")
+        runs_root = resolve_runs_root(repo_root, config)
     except Exception:  # noqa: BLE001 - fall back to the documented default
         runs_root = repo_root.parent / "EvalRuns"
     try:

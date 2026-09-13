@@ -273,10 +273,14 @@ uv run ai-native-evals compare my-task --agents codex,dsh-release --preset codex
 构建：
 
 ```powershell
-pwsh -File .\tools\build-sandbox-images.ps1 -IncludeDshRelease -UseMirror
-# 需要严格复现本地 dsh commit 时：
-pwsh -File .\tools\build-sandbox-images.ps1 -IncludeDsh -UseMirror
+.\tools\eval.ps1 build -UseMirror                     # 构建所有声明了 build 的 Agent
+.\tools\eval.ps1 build -Agent dsh-release -UseMirror  # 只构建一个
+# 需要固定某个版本时：
+.\tools\eval.ps1 build -Agent codex -Version 0.160.0
 ```
+
+构建工具按 Profile 里的 `build` 块逐个 Agent 构建，脚本本身不认识任何 Agent 名字；
+`profiles/agents/*.yaml` 是唯一需要改的地方。
 
 只改 `profiles/agents` 或新增 Adapter，不要在共享 Evaluator 里写 `if codex / if dsh`。
 

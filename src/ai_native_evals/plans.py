@@ -155,9 +155,14 @@ class TestPlan:
 
         hard_value = value.get("hard_checks")
         if hard_value is None:
-            hard_checks = tuple(
-                check.id for check in checks if check.required and check.phase == "outcome"
-            )
+            # `required` means "this check may not be lost in an average", and it
+            # used to be honored only for `outcome` checks: `required: true` on a
+            # quality or process check validated, appeared in the manifest, and
+            # then did nothing. A Judge that answered `fail` was recorded as
+            # `failed` and a Run that failed it was still reported as `pass`,
+            # unless the Task had also guessed to set `quality_threshold`. The
+            # word now means one thing in every phase.
+            hard_checks = tuple(check.id for check in checks if check.required)
         else:
             if not isinstance(hard_value, (list, tuple)) or not all(
                 isinstance(item, str) and item for item in hard_value

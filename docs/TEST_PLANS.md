@@ -2,8 +2,8 @@
 
 A Task is a scenario; its tests are a `TestPlan` made of typed `CheckSpec`
 entries. The plan is data, while reusable evaluator implementations remain
-code-owned modules. New plans live in `tasks/<task-id>/task.yaml`; inline
-`config/eval.yaml.tasks` remains a compatibility format only.
+code-owned modules. Plans live in `tasks/<task-id>/task.yaml`; there is no inline
+plan format in `config/eval.yaml`, and no compatibility path that reads one.
 
 ```text
 Task
@@ -80,7 +80,7 @@ That distinction is the difference between "this Agent failed the task" and
 result, because a broken evaluator would otherwise be recorded as an Agent
 scoring zero.
 
-`on_error` says how an evaluator that could not run is read:
+`on_error` says how a check that **could not run** is read:
 
 | `on_error` | check status | counts toward the verdict |
 | --- | --- | --- |
@@ -88,10 +88,14 @@ scoring zero.
 | `review` | `review` | no; the Run becomes undetermined |
 | `skip` | `skipped` | no; the check is dropped from the verdict |
 
-`uncertain_result` (`review` by default, or `fail`) decides what an undetermined
-Run is reported as. Both error producers apply `on_error` identically: the
-exception boundary in `_execute_check` and `_error_result`, which covers an
-unregistered evaluator or a missing required config.
+An evaluator that *raised* is not covered by this table: a crash here is a defect
+in the framework, not a fact about the Agent, so it is always undetermined. Both
+non-crash error producers apply `on_error` identically: the not-registered check
+in `_execute_check` and `_error_result`, which covers a missing required config.
+
+`required` means "this check may not be lost in an average", and it means that in
+**every** phase. A required check that fails makes the Run `fail`; a required
+Quality check whose Judge answers `fail` fails the Run with no threshold needed.
 
 Scoring follows the same rule:
 
@@ -99,6 +103,9 @@ Scoring follows the same rule:
   verdict, so an unmeasurable check yields `null` rather than a fabricated `0`.
 - `quality_score` and `process_score` average the checks that returned a score.
 - A Run with **no** determinate verdict at all is never reported as `pass`.
+- `pass` additionally requires a determinate verdict on an `outcome` check. A plan
+  made only of Process checks describes how the work was done, never whether it
+  was done, so it follows `uncertain_result` instead of passing.
 
 Decision order: hard-check failure, then the quality threshold, then
 `uncertain_result`, otherwise `pass`.

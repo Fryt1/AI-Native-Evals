@@ -228,9 +228,30 @@ function AgentsSection({ agents }: { agents: RegistryEntry[] }) {
                       ))}
                     </select>
                   ) : (
-                    version && <code className="agent-version">v{version}</code>
+                    version && (
+                      /* Why there is no picker: on hover, and in the accessible
+                         name, rather than as a line of text. Three Agents each
+                         saying "only this version is built" is the same sentence
+                         three times, and it teaches nothing the second time. The
+                         state stays available to a screen reader and on touch,
+                         where a title attribute alone would not reach it. */
+                      <code
+                        className="agent-version"
+                        title={
+                          versions.length === 1
+                            ? `仅此一版已构建：${version}`
+                            : "还没有构建任何版本"
+                        }
+                        aria-label={
+                          versions.length === 1
+                            ? `版本 ${version}，仅此一版已构建`
+                            : "还没有构建任何版本"
+                        }
+                      >
+                        v{version}
+                      </code>
+                    )
                   )}
-                  {versions.length === 1 && <span className="agent-version-note">仅此一版已构建</span>}
                   <span className={`agent-badge ${badge.tone}`}>{badge.text}</span>
                 </div>
                 <div className="agent-check-actions">
@@ -333,9 +354,12 @@ export function PreflightPage() {
   const cancelled = useRef(false);
   useEffect(() => {
     cancelled.current = false;
-    getJson<PreflightRun>("/preflight")
-      .then((value) => { if (!cancelled.current) setRun(value); })
-      .catch(() => { /* No previous check is a normal first visit. */ });
+    // `check` is null on a first visit. That is a normal state, and the server
+    // says so with 200 rather than 404 -- a 404 would log a console error on
+    // every new visitor's page for something that is not a failure.
+    getJson<{ check: PreflightRun | null }>("/preflight")
+      .then((value) => { if (!cancelled.current && value.check) setRun(value.check); })
+      .catch(() => { /* A failed fetch is reported by the run controls. */ });
     return () => { cancelled.current = true; };
   }, []);
 

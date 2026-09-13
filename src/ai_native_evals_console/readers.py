@@ -12,6 +12,42 @@ from typing import Any
 
 MAX_EVENT_PAYLOAD = 64_000
 
+#: Media types a browser executes or evaluates as a document. An artifact comes
+#: out of a workspace the evaluated Agent could write, so none of these may be
+#: advertised or served as itself. Defined here because both the catalog (which
+#: lists the type) and the API (which serves it) must agree.
+ACTIVE_MEDIA_TYPES = frozenset(
+    {
+        "text/html",
+        "text/xml",
+        "application/xhtml+xml",
+        "image/svg+xml",
+        "application/xml",
+        "text/javascript",
+        "application/javascript",
+        "application/x-javascript",
+        "text/ecmascript",
+        "application/ecmascript",
+    }
+)
+
+
+def safe_media_type(path: Path, declared: str = "") -> str:
+    """The media type the browser may be told, given a subject-controlled file.
+
+    Anything the browser would execute is reported as an opaque binary, which is
+    what stops a run from serving itself as same-origin script. Everything else
+    keeps its declared or guessed type, which is what keeps JSON and text
+    previews readable.
+    """
+    guessed = mimetypes.guess_type(path.name)[0] or ""
+    candidate = (
+        (declared or guessed or "application/octet-stream").split(";")[0].strip().lower()
+    )
+    if candidate in ACTIVE_MEDIA_TYPES or candidate.endswith(("+xml", "/xml")):
+        return "application/octet-stream"
+    return candidate or "application/octet-stream"
+
 
 def load_json(path: Path) -> dict[str, Any] | list[Any] | None:
     """Read JSON without allowing malformed data to break the Console."""
@@ -362,7 +398,10 @@ def _artifact_record(
     except (OSError, ValueError):
         return None
     kind = path.suffix.lower().lstrip(".") or "file"
-    mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    # Derived by the Console, and already neutralized for active types: the
+    # listing and the download must describe the same bytes the same way, or the
+    # UI shows a broken image for a file the API deliberately refuses to type.
+    mime = safe_media_type(path)
     previewable = mime.startswith(("text/", "image/")) or kind in {
         "json",
         "jsonl",
@@ -408,10 +447,16 @@ def read_artifacts(run_dir: Path) -> list[dict[str, Any]]:
                 created_by=str(item.get("created_by") or "unknown"),
             )
             if record:
+                # `artifacts/manifest.json` lives in the run's workspace, which the
+                # evaluated Agent can write to. Only descriptive fields may come
+                # from it: `mime_type` and `previewable` decide what the browser
+                # does with the bytes, so a subject-declared `text/html` would let
+                # a run serve itself as same-origin script in the Console. The
+                # type is derived from the file below, by the Console.
                 record.update(
                     {
                         key: item[key]
-                        for key in ("artifact_id", "kind", "mime_type", "sha256", "previewable")
+                        for key in ("artifact_id", "kind", "sha256")
                         if key in item
                     }
                 )

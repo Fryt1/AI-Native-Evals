@@ -31,11 +31,41 @@ from .readers import (
     trace_dir,
 )
 
-_HOST_PATH_RE = re.compile(r"(?<![A-Za-z0-9_])(?:[A-Za-z]:[\\/]|\\\\)[^\"\'<>\r\n]+")
+_HOST_PATH_RE = re.compile(
+    r"(?<![A-Za-z0-9_])"
+    r"(?:"
+    # A Windows drive path, in either separator style.
+    r"[A-Za-z]:[\\/][^\"\'<>\r\n]*"
+    r"|"
+    # A UNC share.
+    r"\\\\[^\"\'<>\r\n]+"
+    r"|"
+    # A POSIX absolute path that names a home or a known container root. Run
+    # traces carry paths like /home/runner/.codex/... and /root/.config/...,
+    # which the Windows-only patterns used to pass straight through to the
+    # browser even though they name the host just as plainly.
+    r"/(?:home|root|Users|mnt|opt|srv)/[^\"\'<>\s]*"
+    r")"
+)
 
 
 def _strip_embedded_host_paths(value: str) -> str:
     return _HOST_PATH_RE.sub("<host-path>", value)
+
+
+def _relative_profile_path(repo_root: Path, value: Any) -> str:
+    """A profile file's location as a repository-relative label.
+
+    The loader records an absolute path because it needs one; the browser does
+    not, and must not receive one. A file outside the repository is reported by
+    name only, since any correct answer would be a host path.
+    """
+    if not isinstance(value, str) or not value:
+        return "profiles/providers/*.yaml"
+    try:
+        return Path(value).resolve().relative_to(repo_root.resolve()).as_posix()
+    except (OSError, ValueError):
+        return Path(value).name
 
 
 def _safe_value(value: Any, *, root: Path | None = None, key: str = "") -> Any:
@@ -281,7 +311,11 @@ def run_events(catalog: Catalog, run_id: str, **filters: Any) -> dict[str, Any] 
     events, has_more, last_seq = read_events(run_dir, manifest, **filters)
     return {
         "run_id": run_id,
-        "events": events,
+        # Event payloads are the Agent's own tool calls, so they are full of host
+        # paths from the trace. The other read models pass through `_safe_value`
+        # and this one did not, which is how `D:\...\workspace\output\scene.blend`
+        # reached the browser.
+        "events": _safe_value(events, root=run_dir),
         "has_more": has_more,
         "next_after_seq": last_seq if events else filters.get("after_seq", -1),
     }
@@ -548,7 +582,10 @@ def registry(repo_root: Path) -> dict[str, Any]:
         provider_map[provider_id] = {
             "id": provider_id,
             "kind": "provider",
-            "path": str(profile.get("source_path") or "profiles/providers/*.yaml"),
+            # A repository-relative name, never the absolute path the loader
+            # records: `source_path` is where this machine keeps the file, and the
+            # Console's contract is that it does not hand the browser host paths.
+            "path": _relative_profile_path(repo_root, profile.get("source_path")),
             "summary": (
                 ("已配置" if env_path and env_path.is_file() else "未配置")
                 + " · 上游 "

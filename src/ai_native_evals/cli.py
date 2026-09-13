@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 
 import yaml
@@ -465,26 +466,33 @@ def _task_validate(args: argparse.Namespace) -> int:
 
 
 def _profile_catalog(repo_root: Path, kind: str) -> dict[str, dict[str, object]]:
-    _config_path, config = _config_for_repo(repo_root)
-    from .runs.resolver import _mapping, _merge_named_profile_source
+    """List one profile kind exactly as a run would resolve it.
 
-    profiles_config = _mapping(config, "profiles")
+    This used to pre-merge a `<profiles>.<kind>` overlay from the config and pass
+    it as a fourth positional argument. The resolver dropped that parameter when
+    the inline-profile compatibility layer was removed, and this caller was left
+    behind -- which is why every `* list` command and `doctor` raised TypeError.
+    Keeping the resolution in one place is what makes that impossible: there is
+    now no argument here to drift out of date.
+    """
+    _config_path, config = _config_for_repo(repo_root)
+    from .runs.resolver import _merge_named_profile_source
+
     mapping = {
-        "agents": ("agents", "agents", "profiles/agents"),
-        "models": ("model_profiles", "models", "profiles/models"),
-        "mcp": ("mcp_profiles", "mcp", "profiles/mcp"),
-        "sandboxes": ("sandbox_profiles", "sandboxes", "profiles/sandboxes"),
-        "presets": ("presets", "presets", "config/presets"),
+        "agents": ("agents", "profiles/agents"),
+        "models": ("model_profiles", "profiles/models"),
+        "mcp": ("mcp_profiles", "profiles/mcp"),
+        "sandboxes": ("sandbox_profiles", "profiles/sandboxes"),
+        "presets": ("presets", "config/presets"),
     }
     if kind not in mapping:
         raise EvalConfigError(f"unsupported profile catalog: {kind}")
-    inline_key, profile_key, default_root = mapping[kind]
+    inline_key, default_root = mapping[kind]
     return _merge_named_profile_source(
         repo_root,
         config,
         inline_key,
-        {**_mapping(profiles_config, profile_key), **_mapping(config, inline_key)},
-        profile_root_key=profile_key,
+        profile_root_key=kind,
         default_root=default_root,
     )
 
@@ -742,8 +750,13 @@ def _preflight(args: argparse.Namespace) -> int:
     return 0 if report.ready else 1
 
 
-def main() -> int:
-    """Run diagnostics or manual evaluation lifecycle commands."""
+def main(argv: Sequence[str] | None = None) -> int:
+    """Run diagnostics or manual evaluation lifecycle commands.
+
+    ``argv`` defaults to the process arguments; accepting it explicitly is what
+    lets a test drive the real parser and dispatch instead of importing the
+    module and hoping.
+    """
     parser = argparse.ArgumentParser(description="AI-Native Agent evaluation controls")
     parser.add_argument("--version", action="store_true", help="print the package version")
     subparsers = parser.add_subparsers(dest="command")
@@ -932,7 +945,7 @@ def main() -> int:
     cleanup_parser = run_subparsers.add_parser("cleanup", help="remove a run workspace")
     cleanup_parser.add_argument("run_id")
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if getattr(args, "refresh_sources", False):
         # Resolution reads this from the environment, so every path that resolves
         # a resource (run, compare, preflight) honours one flag without each of

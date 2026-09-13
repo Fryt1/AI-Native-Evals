@@ -1,5 +1,11 @@
 # Codex / DSH 同 Task 实跑结果
 
+> **历史记录。** 这里引用的 `structured-report-contract` Task Bundle 与两个 Run
+> 现场已在 `404ff92` 中随其余退化 Task 一并删除，`tasks/` 现只保留
+> `codex-file-smoke` 与 `blender-scene-build`。本文保留当时的结论与 Run ID，因为
+> 它记录的是**当时真实发生过的事**；改写 Run ID 去迁就当前的目录树会让记录失真。
+> 要复现同样的对比，请用现存的 Task 重跑，见文末。
+
 在 **2026 年 9 月 8 日**，使用同一 `structured-report-contract` Task、同一模型 Profile、同一 Gateway、同一 TestPlan 和同一 Outcome/Quality Evaluator，分别运行了两个 Docker Agent：
 
 | Agent | 镜像 | Run | Outcome | Quality | Process | Decision |
@@ -17,15 +23,14 @@
 
 ## 现场位置
 
-两个 Run 的现场都在本机 `<EvalRuns>/` 下（具体位置见 `config/eval.yaml` 的
-`paths.runs_root`），目录名即 Run ID：
+两个 Run 的现场**已不存在**（随 Task Bundle 一并删除，见文首说明）。它们曾经位于：
 
 ```text
-<EvalRuns>/structured-report-contract-ff8e08ac2a/
-<EvalRuns>/structured-report-contract-0b8400ec2b/
+<EvalRuns>/structured-report-contract-ff8e08ac2a/     # 已删除
+<EvalRuns>/structured-report-contract-0b8400ec2b/     # 已删除
 ```
 
-每个现场都包含：
+每个现场当时包含：
 
 ```text
 workspace/output/agent-result.json
@@ -35,6 +40,14 @@ workspace/trace/agent-container.log
 workspace/trace/normalized-events.jsonl
 workspace/trace/digest.json
 workspace/trace/evaluators/
+```
+
+## 复现同样的对比
+
+用现存的 Task 重跑，被测 Agent 由 `--agents` 切换，Task/TestPlan/Evaluator 不变：
+
+```powershell
+uv run ai-native-evals compare codex-file-smoke --agents codex,dsh-release --preset codex-default
 ```
 
 ## 解释
