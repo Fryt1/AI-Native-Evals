@@ -474,19 +474,17 @@ def _list_yaml_profiles(root: Path, kind: str) -> list[dict[str, Any]]:
 
 
 def _agent_versions(entry: dict[str, Any]) -> list[str]:
-    """Versions of this Agent that are built and that this profile can run.
+    """Versions of this Agent that are built, so a choice can actually start.
 
-    Two filters, both necessary.
+    Read from the images rather than from a list in a file: a version nobody
+    built cannot start, and a hand-kept list drifts the moment someone builds or
+    prunes one.
 
-    Built: a version whose image does not exist cannot start, so offering it
-    would be offering a choice that fails at container start.
-
-    Compatible: two profiles may share an image repository while launching it
-    differently -- a published build and a source build of DSH are the same
-    repository with different entrypoints. Their tags are distinguishable only
-    by convention (`src-<commit>` for a source build), so the build kind decides
-    which tags belong to this profile. Without this, each profile offered the
-    other's versions and the picker invited a launch that cannot work.
+    An earlier version also filtered by build kind, for the case of two profiles
+    sharing an image repository while launching it differently. No two profiles
+    share a repository now, so the filter had nothing left to decide; if that
+    changes, the profiles need a way to say which tags are theirs, and the build
+    kind is not it -- the kind described packaging, not identity.
     """
     from ai_native_evals.runs.images import available_versions
 
@@ -494,13 +492,7 @@ def _agent_versions(entry: dict[str, Any]) -> list[str]:
     repository = image.rpartition(":")[0] if ":" in image else ""
     if not repository or "/" in image.rpartition(":")[2]:
         return [str(entry["agent_version"])] if entry.get("agent_version") else []
-    built = available_versions(repository)
-    kind = str((entry.get("build") or {}).get("kind") or "")
-    if kind == "source":
-        return [tag for tag in built if tag.startswith("src-")]
-    if kind == "npm":
-        return [tag for tag in built if not tag.startswith("src-")]
-    return built
+    return available_versions(repository)
 
 
 def registry(repo_root: Path) -> dict[str, Any]:

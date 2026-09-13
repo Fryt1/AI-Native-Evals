@@ -115,11 +115,41 @@ def test_no_shipped_profile_uses_a_mutable_tag() -> None:
 # --- the build script --------------------------------------------------------
 
 
-def test_the_build_script_tags_with_the_version() -> None:
+def test_the_build_script_names_no_agent() -> None:
+    """The script builds whatever the profiles declare, and knows no Agent.
+
+    It used to hold a list: `-CodexVersion`, `-DshVersion`, `-IncludeDshRelease`
+    and a hard-coded Dockerfile path each. Adding an Agent meant editing this
+    script, which is what made it an enumeration rather than an abstraction.
+    """
     text = (REPO / "tools" / "build-sandbox-images.ps1").read_text(encoding="utf-8")
 
-    assert "ai-native-codex-agent:$CodexVersion" in text
-    assert '$dshReleaseTag = "ai-native-dsh-agent:$DshVersion"' in text
+    for name in ("codex", "dsh", "example-cli"):
+        assert f"ai-native-{name}-agent" not in text, f"the build script names {name!r}"
+        assert f"docker/{name}-agent" not in text, f"the build script names {name!r}"
+
+
+def test_the_build_script_derives_the_tag_from_the_profile() -> None:
+    """The tag is `<image_repository>:<version>`, read from the profile."""
+    text = (REPO / "tools" / "build-sandbox-images.ps1").read_text(encoding="utf-8")
+
+    assert "$build.repository" in text
+    assert "$build.version" in text
+    assert "load_agent_profiles" in text
+
+
+def test_the_build_script_does_not_impose_a_base_image_on_every_agent() -> None:
+    """A Dockerfile's ARG default is its own business.
+
+    Passing `NODE_BASE_IMAGE` to every Agent broke one: the gateway image runs as
+    an unprivileged user, so `npm install -g` inside a Dockerfile that expected
+    the plain Node base failed with EACCES. An Agent that genuinely differs
+    declares the override in its own profile.
+    """
+    text = (REPO / "tools" / "build-sandbox-images.ps1").read_text(encoding="utf-8")
+
+    assert '"--build-arg", "NODE_BASE_IMAGE=ai-native-llm-gateway:local"' not in text
+    assert "$build.build_args" in text
 
 
 def test_the_build_script_no_longer_writes_a_versionless_tag() -> None:

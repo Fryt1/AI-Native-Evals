@@ -38,11 +38,11 @@ class AgentProfile:
     #: framework's vocabulary and could not describe an Agent that composes
     #: differently -- or one that has no such mechanism at all.
     attach: tuple[str, ...] = ()
-    #: How this Agent's image is produced, when the framework builds it.
-    #: Declared here so the build tool needs no list of Agents: it reads the
-    #: profile and does what the profile says. `kind` selects the recipe --
-    #: `npm` installs a published package, `source` builds a checkout identified
-    #: by commit, `prebuilt` means the image already exists.
+    #: How to produce this Agent's image: `{dockerfile, version_arg?}`. The
+    #: framework knows only that much -- run this Dockerfile, pass the version,
+    #: tag the result. How the Agent is installed is the Dockerfile's business.
+    #: Absent means there is nothing to build: a published image, or one built
+    #: outside this repository.
     build: dict[str, Any] = field(default_factory=dict)
     #: How this Agent's log becomes normalized events: `{parser: codex}`. Its own
     #: field rather than a derivation, because reading a log and selecting an
@@ -116,18 +116,16 @@ class AgentProfile:
         build = value.get("build", {})
         if not isinstance(build, Mapping):
             raise AgentProfileError(f"agent profile {profile_id!r} build must be a mapping")
-        build_kind = str(build.get("kind") or "").strip()
         trace = value.get("trace", {})
         if not isinstance(trace, Mapping):
             raise AgentProfileError(f"agent profile {profile_id!r} trace must be a mapping")
-        if build_kind and build_kind not in {"npm", "source", "prebuilt"}:
+        # A declared build is a Dockerfile and, optionally, the name of the build
+        # argument its version is passed as. Nothing else: how the Agent is
+        # installed belongs to the Dockerfile, and a field describing it here
+        # would be shared vocabulary for one Agent's packaging.
+        if build and not str(build.get("dockerfile") or "").strip():
             raise AgentProfileError(
-                f"agent profile {profile_id!r} build.kind must be npm, source or prebuilt"
-            )
-        needs_dockerfile = build_kind and build_kind != "prebuilt"
-        if needs_dockerfile and not str(build.get("dockerfile") or "").strip():
-            raise AgentProfileError(
-                f"agent profile {profile_id!r} build of kind {build_kind!r} needs a dockerfile"
+                f"agent profile {profile_id!r} declares a build without a dockerfile"
             )
         return cls(
             profile_id=profile_id,

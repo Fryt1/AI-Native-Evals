@@ -80,12 +80,12 @@ The offline build loads the Docker archive first and then uses
 `docker build --network none --pull=false`. It does not use Docker Hub, PyPI,
 npm, or apt. The current offline build was validated successfully and the
 resulting Codex image includes `git`, Codex 0.153.4, Blender MCP, and Comfy MCP.
-The DSH image is deliberately not part of this archive: it is built from the
-separate `dsh` repository and needs its own pnpm dependency cache. Build it
-when the network is available:
+The DSH image is deliberately not part of this archive: DSH installs its own
+package at build time and needs network access to do it. Build it when the
+network is available:
 
 ```powershell
-pwsh -NoProfile -File .\tools\build-sandbox-images.ps1 -IncludeDshRelease -UseMirror
+.\tools\eval.ps1 build -Agent dsh-release -UseMirror
 ```
 
 ## What is deliberately not cached in Git

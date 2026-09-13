@@ -52,48 +52,49 @@ no Agent does that today.
 
 ### build
 
-New. Replaces the switch-per-Agent script.
+Replaces the switch-per-Agent script. A profile states a Dockerfile and the name
+of the build argument its version is passed as; nothing else.
 
 ```yaml
-# A published package
 build:
-  kind: npm
-  package: "@openai/codex"
-  version: 0.153.4
   dockerfile: docker/codex-agent/Dockerfile
+  version_arg: CODEX_VERSION
+  args:                            # optional, only where this Agent differs
+    NODE_BASE_IMAGE: ai-native-llm-gateway:local
 ```
 
-```yaml
-# A checkout, identified by commit
-build:
-  kind: source
-  source: some_checkout           # an id in paths.source_roots
-  dockerfile: docker/<agent>/Dockerfile
-```
+An Agent with nothing to build declares no `build` block: a published image, or
+one built outside this repository. That is a normal state, and the tool reports
+it as such rather than inventing a build.
 
-`kind: source` is declared and validated, but no Agent currently uses it. DSH
-was the one candidate and it was withdrawn: its workspace build type-checks
-`website`, `benchmarks` and every `tests/` directory, so compiling `lib/` inside
-the image means putting all of them back into a build context that excludes them
-on purpose -- several minutes per build, to support a case this repository does
-not have, since it does not modify DSH's source. An Agent whose checkout does
-build cleanly in an image can use this kind as it stands.
+**What stays out of this block is the point.** An earlier version of this
+document proposed `kind: npm | source | prebuilt`, describing *how* the Agent is
+installed. That is the same mistake as `plugins`: packaging is the Dockerfile's
+business, and a field naming it in shared vocabulary cannot describe the second
+Agent that packages differently. Codex unpacks a downloaded tarball and DSH runs
+`npm install -g`; both would have been labelled `npm` while sharing no mechanism.
 
-```yaml
-# Already built elsewhere; nothing to do
-build:
-  kind: prebuilt
-```
+Two things the framework does need to know, because they are not visible from
+inside the Dockerfile:
 
-The build tool then takes an Agent id and reads its declaration:
+- **`version_arg`** -- what this Dockerfile calls its version argument. `ARG
+  CODEX_VERSION` and `ARG DSH_VERSION` are both fine; the profile says which.
+- **`args`** -- build arguments this Agent overrides. A Dockerfile's `ARG`
+  default is correct for that Dockerfile, and imposing one Agent's value on all
+  of them broke one: `NODE_BASE_IMAGE` was set to the gateway image for every
+  Agent, so a Dockerfile expecting the plain Node base ran `npm install -g` as
+  the unprivileged `node` user and failed with `EACCES`.
+
+The build tool reads the profiles through the same loader a run uses, so the two
+cannot disagree about what a profile means:
 
 ```powershell
-.\tools\eval.ps1 build codex
-.\tools\eval.ps1 build codex -Version 0.160.0
+.\tools\eval.ps1 build                       # every Agent that declares a build
+.\tools\eval.ps1 build -Agent codex
+.\tools\eval.ps1 build -Agent codex -Version 0.160.0
 ```
 
-It no longer contains a list of Agents. A new Agent is a profile and a
-Dockerfile; the tool needs no edit.
+It names no Agent. A new Agent is a profile and a Dockerfile.
 
 ### launch
 

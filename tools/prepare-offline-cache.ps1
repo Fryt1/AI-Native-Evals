@@ -5,9 +5,6 @@ param(
     [string]$NodeBaseImage = "node:22-bookworm",
     [string]$PyPIIndex = "https://pypi.tuna.tsinghua.edu.cn/simple",
     [string]$NpmRegistry = "https://registry.npmmirror.com",
-    # The DSH release to cache. Kept in step with the build script's default so
-    # the cached image is the one a profile names.
-    [string]$DshVersion = "0.1.2-rc.1",
     [switch]$RegenerateLocks,
     [switch]$RefreshWheels,
     [switch]$SkipImageSave

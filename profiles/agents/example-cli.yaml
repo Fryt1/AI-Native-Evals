@@ -7,11 +7,11 @@ description: >-
 # trace.parser 不写则退化为 generic：仍产生事件，只是识别不出类型。
 image_repository: ai-native-example-cli
 agent_version: 1.0.0
-# Built by hand from docker/example-cli/Dockerfile, which the template documents.
-# `prebuilt` says so, and the build tool leaves it alone rather than looking for
-# a package to install.
-build:
-  kind: prebuilt
+# No `build` block: this image is built by hand from docker/example-cli/Dockerfile,
+# which the template documents. A profile with nothing to build is a normal
+# state -- an Agent that arrives as a published image, or one built outside this
+# repository, declares none. The build tool builds what is declared and reports
+# the rest as already present rather than inventing a build for it.
 options: {}
 # The template mimics Codex's event stream, so the Codex parser reads it. An
 # Agent with its own format sets `generic` and gets pass-through events.

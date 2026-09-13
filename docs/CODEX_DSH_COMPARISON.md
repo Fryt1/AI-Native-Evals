@@ -42,7 +42,7 @@ workspace/trace/evaluators/
 `dsh-release` 是发布镜像，也是当前唯一受支持的 DSH Agent：
 
 ```powershell
-pwsh -File .\tools\build-sandbox-images.ps1 -IncludeDshRelease -UseMirror
+.\tools\eval.ps1 build -Agent dsh-release -UseMirror
 ```
 
 曾经有一个从 DSH 源码构建的镜像，用来复现某个源码 commit。它已移除：workspace 的 `lib/` 编译产物需要把 `tests`、`website`、`benchmarks` 全部放进构建上下文再跑一次全量 `tsc`，而本仓库并不修改 DSH 的源码，这样做的代价没有对应需求。自研插件改由 profile 的 `attach` 在运行时投递，同样不需要源码镜像。

@@ -5,9 +5,8 @@ adapter: dsh-acp
 image_repository: ai-native-dsh-agent
 agent_version: 0.1.2-rc.1
 build:
-  kind: npm
-  package: "@deepseek-ai/dsh"
   dockerfile: docker/dsh-agent/Dockerfile.release
+  version_arg: DSH_VERSION
 protocol: acp
 workdir: /workspace
 # The ACP runner writes protocol messages; this parser reads them.

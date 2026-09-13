@@ -7,12 +7,24 @@ adapter: codex
 # than replacing it.
 image_repository: ai-native-codex-agent
 agent_version: 0.153.4
-# How this Agent's image is produced. The build tool reads this instead of
-# carrying a list of Agents, so a new Agent is a profile plus a Dockerfile.
+# Where this Agent's image comes from. The framework knows only this much: run
+# this Dockerfile, pass the version, tag the result. How the Agent is installed
+# -- a package, a tarball, a compiled checkout -- is the Dockerfile's business,
+# and describing it here would put one Agent's packaging into shared vocabulary.
+#
+# The Dockerfile receives the version as CODEX_VERSION, named by `version_arg`
+# because only the Dockerfile knows what its own build argument is called.
+#
+# `args` carries build arguments this Agent's Dockerfile needs beyond the
+# defaults it declares. Codex copies Node and git out of the gateway image
+# rather than installing them, which is why its Node base is that image and not
+# the upstream one. A Dockerfile's ARG default is correct for the Dockerfile;
+# this only overrides it where an Agent genuinely differs.
 build:
-  kind: npm
-  package: "@openai/codex"
   dockerfile: docker/codex-agent/Dockerfile
+  version_arg: CODEX_VERSION
+  args:
+    NODE_BASE_IMAGE: ai-native-llm-gateway:local
 protocol: responses
 workdir: /workspace
 # Codex writes a line-delimited JSON event stream; this parser reads it.

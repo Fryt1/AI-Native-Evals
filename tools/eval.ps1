@@ -35,9 +35,10 @@ param(
     [string]$Provider,
     [string]$Model,
 
-    # Build options.
+    # Build options. `-Agent` above selects which Agents `build` builds; empty
+    # builds every Agent whose profile declares how to build itself.
+    [string]$Version,
     [switch]$UseMirror,
-    [switch]$IncludeDshRelease,
     [switch]$Offline,
 
     # Emit JSON instead of text where the underlying command supports it.
@@ -172,8 +173,9 @@ switch ($Action) {
     "build" {
         Write-Section "Building sandbox images"
         $args = @()
+        if ($Agent) { $args += @("-Agent", $Agent) }
+        if ($Version) { $args += @("-Version", $Version) }
         if ($UseMirror) { $args += "-UseMirror" }
-        if ($IncludeDshRelease) { $args += "-IncludeDshRelease" }
         if ($Offline) { $args += "-Offline" }
         Invoke-Script (Join-Path $PSScriptRoot "build-sandbox-images.ps1") $args
         if ($script:LastExit -ne 0) { exit $script:LastExit }
