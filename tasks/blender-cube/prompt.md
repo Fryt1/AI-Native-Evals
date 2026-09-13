@@ -1,1 +1,0 @@
-Create a small cube in the currently running Blender instance through the configured Blender MCP tools. Save a verification artifact under /workspace/evidence/blender-cube.json, and verify the cube exists before reporting completion. Do not use shell scripts or a custom socket client to control Blender.

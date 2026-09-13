@@ -1,19 +1,23 @@
 # Manifest-driven multi-DCC verify gate
 
-Now the round-trip task declares its expected host state in `config/eval.yaml`
-under `task.verify`. `prepare` bakes that block into the immutable run
-manifest, and `ai-native-evals run verify <run-id>` re-checks the host with
-**independent read-back only** (never the Agent exit code or prose):
+A Task declares its expected host state in its `verify` block. `prepare` bakes
+that block into the immutable run manifest, and `ai-native-evals run verify
+<run-id>` re-checks the host with **independent read-back only** (never the
+Agent exit code or prose):
 
 ```powershell
-uv run ai-native-evals run prepare roundtrip-blender-ue5-v2 --agent codex-dcc
+uv run ai-native-evals run prepare <task-id> --agent codex-dcc
 uv run ai-native-evals run start <run-id>
 uv run ai-native-evals run wait <run-id>
 uv run ai-native-evals run verify <run-id>   # exit 0/1 from host truth
 ```
 
-- Blender side: opens the saved `roundtrip-v2.blend` headless
-  (`blender --background --python blender_inspect_scene.py`) and checks the
+`<task-id>` is any Task that declares a `verify` block; the one used for the
+run recorded below has since been removed, so the command is shown generically
+rather than naming a Task that no longer exists.
+
+- Blender side: opens the saved `.blend` headless
+  (`blender --background --python <inspect script>`) and checks the
   expected object name/type/location.
 - UE5 side: starts a **fresh** unreal-mcp session and calls
   `find_actors` (with the plugin-required `tag`/`collision_channels`),

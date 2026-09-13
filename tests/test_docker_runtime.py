@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
+
+import pytest
 
 import ai_native_evals.runs.docker_runtime as runtime
 from ai_native_evals.runs.docker_runtime import _agent_run_args, _linux_path, start_docker_run
@@ -26,8 +29,10 @@ def _manifest(run_dir: Path) -> dict[str, object]:
     return {
         "status": "prepared",
         "run": {
-            "run_id": "blender-cube-abc123",
-            "task_id": "blender-cube",
+            # A neutral fixture id: naming it after a real Task Bundle made the
+            # test look like it depended on one.
+            "run_id": "sample-task-abc123",
+            "task_id": "sample-task",
             "task_prompt": "Create a cube through Blender MCP.",
             "agent_image": "test-agent",
             "model": "deepseek/deepseek-v4-flash",
@@ -41,7 +46,8 @@ def _manifest(run_dir: Path) -> dict[str, object]:
 
 
 def test_linux_path_converts_windows_drive() -> None:
-    assert _linux_path(Path("D:/work/AI-Native")) == "/mnt/d/work/AI-Native"
+    # Any drive path works here; the conversion is what is under test.
+    assert _linux_path(Path("D:/some/dir")) == "/mnt/d/some/dir"
 
 
 def test_agent_command_mounts_snapshot_and_prompt(tmp_path: Path) -> None:
@@ -118,3 +124,126 @@ def test_agent_profile_controls_entrypoint_and_command_without_codex_branch(tmp_
         "/run-config/dsh-acp-runner.mjs",
         "Create a cube through Blender MCP.",
     ]
+
+
+def _running_manifest(tmp_path: Path) -> tuple[Path, dict]:
+    manifest = _manifest(tmp_path)
+    manifest["status"] = "running"
+    manifest["run"]["sandbox"] = {"agent_timeout_seconds": 5}
+    manifest["runtime"] = {
+        "agent_container": "eval-agent",
+        "gateway_container": "eval-gateway",
+        "network": "eval-net",
+        "status": "running",
+        "wsl_distro": "Ubuntu-20.04",
+    }
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "run-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    return run_dir, manifest
+
+
+def test_agent_timeout_resolves_from_env_then_profile(monkeypatch) -> None:
+    monkeypatch.delenv("AI_NATIVE_EVALS_AGENT_TIMEOUT_SECONDS", raising=False)
+    assert runtime._agent_timeout_seconds({}) == runtime._DEFAULT_AGENT_TIMEOUT_SECONDS
+    assert runtime._agent_timeout_seconds({"sandbox": {"agent_timeout_seconds": 42}}) == 42
+
+    monkeypatch.setenv("AI_NATIVE_EVALS_AGENT_TIMEOUT_SECONDS", "7")
+    assert runtime._agent_timeout_seconds({"sandbox": {"agent_timeout_seconds": 42}}) == 7
+
+    monkeypatch.setenv("AI_NATIVE_EVALS_AGENT_TIMEOUT_SECONDS", "not-a-number")
+    assert runtime._agent_timeout_seconds({}) == runtime._DEFAULT_AGENT_TIMEOUT_SECONDS
+
+
+@pytest.mark.parametrize("call", ["_docker", "_docker_raw"])
+def test_docker_helpers_never_run_unbounded(call: str, monkeypatch) -> None:
+    """A Docker command that can hang forever can wedge the whole Console."""
+    seen: list[int | None] = []
+
+    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        seen.append(kwargs.get("timeout"))
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(runtime.subprocess, "run", fake_run)
+    getattr(runtime, call)("Ubuntu-20.04", "ps")
+
+    assert seen and all(value is not None for value in seen), seen
+
+
+def test_wait_docker_run_is_bounded_and_reclaims_containers(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A hung Agent is stopped and reclaimed instead of waited on forever."""
+    run_dir, _ = _running_manifest(tmp_path)
+    calls: list[tuple[list[str], int | None]] = []
+
+    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        calls.append((list(cmd), kwargs.get("timeout")))
+        if "wait" in cmd:
+            raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout") or 0)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(runtime.subprocess, "run", fake_run)
+
+    with pytest.raises(runtime.DockerTimeoutError, match="time limit"):
+        runtime.wait_docker_run(run_dir)
+
+    assert calls[0][1] == 5, "the Agent must be waited on with its own limit"
+    removed = [args for args, _ in calls if "rm" in args]
+    assert any("eval-agent" in args for args in removed)
+    assert any("eval-gateway" in args for args in removed)
+    assert all(timeout is not None for _, timeout in calls)
+
+    after = load_manifest(run_dir)
+    assert after["status"] == "stopped"
+    assert after["runtime"]["status"] == "stopped"
+
+
+# --------------------------------------------------------------------------
+# Upstream identity is part of the reproducibility record.
+# --------------------------------------------------------------------------
+
+
+def _env(tmp_path: Path, content: str) -> Path:
+    path = tmp_path / "env.local"
+    path.write_text(content, encoding="utf-8")
+    return path
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        ("UPSTREAM_BASE_URL=https://api.deepseek.com/v1" + chr(10), "https://api.deepseek.com"),
+        ("AI_NATIVE_EVALS_LLM_BASE_URL=https://api.deepseek.com/v1" + chr(10), "https://api.deepseek.com"),
+        ("UPSTREAM_BASE_URL=" + chr(34) + "https://api.deepseek.com/v1" + chr(34) + chr(10), "https://api.deepseek.com"),
+        ("UPSTREAM_BASE_URL=" + chr(39) + "https://api.deepseek.com/v1" + chr(39) + chr(10), "https://api.deepseek.com"),
+        ("export UPSTREAM_BASE_URL=https://api.deepseek.com/v1" + chr(10), "https://api.deepseek.com"),
+        ("UPSTREAM_BASE_URL=http://127.0.0.1:8080/v1" + chr(10), "http://127.0.0.1:8080"),
+        ("UPSTREAM_BASE_URL=api.example.com/v1" + chr(10), "https://api.example.com"),
+        ("SOMETHING_ELSE=1" + chr(10), None),
+        ("# UPSTREAM_BASE_URL=https://api.deepseek.com/v1" + chr(10), None),
+    ],
+)
+def test_upstream_origin_is_parsed_from_the_env_file(
+    tmp_path: Path, content: str, expected: str | None
+) -> None:
+    assert runtime.gateway_upstream_origin(_env(tmp_path, content)) == expected
+
+
+def test_upstream_origin_never_records_a_credential(tmp_path: Path) -> None:
+    """Only the origin may reach the manifest; userinfo and query are dropped."""
+    origin = runtime.gateway_upstream_origin(
+        _env(
+            tmp_path,
+            "UPSTREAM_BASE_URL=https://user:sk-secret@api.example.com/v1?api_key=sk-secret"
+            + chr(10),
+        )
+    )
+
+    assert origin == "https://api.example.com"
+    assert "sk-secret" not in (origin or "")
+    assert "user" not in (origin or "")
+
+
+def test_upstream_origin_tolerates_a_missing_env_file(tmp_path: Path) -> None:
+    assert runtime.gateway_upstream_origin(tmp_path / "absent") is None

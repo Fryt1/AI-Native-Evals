@@ -63,6 +63,9 @@ def multi_dcc_roundtrip() -> Task:
         metadata={
             "suite": "ai-native-evals",
             "kind": "multi-dcc-roundtrip",
-            "run_root": "roundtrip-blender-ue5",
+            # A label for this Inspect task's own evidence tree, not the name of
+            # a Task Bundle. It previously matched a bundle that no longer
+            # exists, which read as a dependency on it.
+            "run_root": "multi-dcc-roundtrip",
         },
     )
