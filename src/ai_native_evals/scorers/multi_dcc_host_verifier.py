@@ -198,18 +198,150 @@ def _verify_blender(
             ),
         }
 
+    # One comparison implementation, shared with the live-scene read-back.
+    passed, findings = _match_expected_objects(objects, expectations)
+    findings["scene"] = str(scene)
+    return passed, findings
+
+
+# ---------------------------------------------------------------------------
+# Live Blender read-back through MCP
+# ---------------------------------------------------------------------------
+# Live Blender read-back through MCP
+# ---------------------------------------------------------------------------
+def _verify_blender_live(
+    host: str,
+    port: int,
+    expectations: list[dict[str, Any]],
+    *,
+    absent: list[str] | None = None,
+    timeout_seconds: int = 60,
+) -> tuple[bool, dict[str, Any]]:
+    """Ask the running Blender what is in its scene, over the MCP bridge.
+
+    Blender is a host service, so this reads host truth directly. It avoids the
+    saved-file path question entirely -- where a `.blend` lands depends on how
+    the host Blender was started, not on anything the container can see.
+    """
+    import socket
+
+    request = {
+        "type": "execute",
+        "strict_json": True,
+        "code": (
+            "import bpy\n"
+            "bpy.context.view_layer.update()\n"
+            "result = {\n"
+            "    'objects': [\n"
+            "        {\n"
+            "            'name': o.name,\n"
+            "            'type': o.type,\n"
+            "            'location': [float(v) for v in o.matrix_world.translation],\n"
+            # Dimensions and light energy are collected because a Rubric that
+            # asks about shape or lighting cannot be judged from name, kind and
+            # origin alone. Without them an honest judge can only answer
+            # "unverifiable", which reads as a quality failure but is really a
+            # gap in the evidence.
+            "            'dimensions': [float(v) for v in o.dimensions],\n"
+            "            'scale': [float(v) for v in o.scale],\n"
+            "            'light': (\n"
+            "                {\n"
+            "                    'type': o.data.type,\n"
+            "                    'energy': float(o.data.energy),\n"
+            "                    'color': [float(c) for c in o.data.color],\n"
+            "                }\n"
+            "                if o.type == 'LIGHT' and o.data\n"
+            "                else None\n"
+            "            ),\n"
+            "        }\n"
+            "        for o in bpy.context.scene.objects\n"
+            "    ]\n"
+            "}\n"
+        ),
+    }
+    try:
+        with socket.create_connection((host, port), timeout=timeout_seconds) as sock:
+            # The bridge frames a request with a NUL terminator, not a newline.
+            sock.sendall(json.dumps(request).encode() + b"\0")
+            sock.settimeout(timeout_seconds)
+            buffer = b""
+            while b"\0" not in buffer:
+                chunk = sock.recv(65536)
+                if not chunk:
+                    break
+                buffer += chunk
+    except OSError as exc:
+        return False, {"passed": False, "answer": "unreachable", "detail": str(exc)}
+
+    raw = buffer.split(b"\0")[0].decode("utf-8", errors="replace").strip()
+    if not raw:
+        return False, {"passed": False, "answer": "empty_response"}
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        return False, {
+            "passed": False,
+            "answer": "invalid_response",
+            "detail": f"{exc}: {raw[:300]}",
+        }
+
+    if payload.get("status") != "ok":
+        return False, {
+            "passed": False,
+            "answer": "bridge_error",
+            "detail": json.dumps(payload)[:400],
+        }
+    objects = (payload.get("result") or {}).get("objects")
+    if not isinstance(objects, list):
+        return False, {
+            "passed": False,
+            "answer": "no_objects",
+            "detail": json.dumps(payload)[:400],
+        }
+
+    return _match_expected_objects(objects, expectations, absent=absent or [])
+
+
+def _match_expected_objects(
+    objects: list[Any],
+    expectations: list[dict[str, Any]],
+    *,
+    absent: list[str] | None = None,
+) -> tuple[bool, dict[str, Any]]:
+    """Compare observed scene objects against the Task's expectations.
+
+    `expectations` says what must be present and what it must look like;
+    `absent` says which names must be gone. Both matter: a scene that has the
+    required objects *and* the leftovers of a first attempt has not satisfied a
+    task that asked for a clean result.
+    """
     checks: list[dict[str, Any]] = []
+    names_present = [o.get("name") for o in objects if isinstance(o, dict)]
+    for banned in absent or []:
+        if banned in names_present:
+            checks.append(
+                {
+                    "expected": {"absent": banned},
+                    "passed": False,
+                    "answer": "unexpected_object",
+                    "detail": f"{banned!r} should not be in the scene",
+                }
+            )
+        else:
+            checks.append({"expected": {"absent": banned}, "passed": True})
     for expected in expectations:
         name = expected.get("name")
-        matches = [obj for obj in objects if isinstance(obj, dict) and obj.get("name") == name]
+        matches = [o for o in objects if isinstance(o, dict) and o.get("name") == name]
         if not matches:
-            names = [obj.get("name") for obj in objects if isinstance(obj, dict)]
             checks.append(
                 {
                     "expected": expected,
                     "passed": False,
                     "answer": "wrong_object",
-                    "detail": f"expected object {name!r}; found {names}",
+                    "detail": (
+                        f"expected object {name!r}; found "
+                        f"{[o.get('name') for o in objects if isinstance(o, dict)]}"
+                    ),
                 }
             )
             continue
@@ -222,11 +354,11 @@ def _verify_blender(
             actual_loc = obj.get("location")
             if not isinstance(actual_loc, list) or len(actual_loc) != 3:
                 problems.append(f"object has no valid location: {actual_loc!r}")
-            else:
-                actual = tuple(float(v) for v in actual_loc)
-                wanted = tuple(float(v) for v in expected_loc)
-                if not _approx_equal(actual, wanted):
-                    problems.append(f"location={actual} != expected {wanted}")
+            elif not _approx_equal(
+                tuple(float(v) for v in actual_loc),
+                tuple(float(v) for v in expected_loc),
+            ):
+                problems.append(f"location={tuple(actual_loc)} != expected {tuple(expected_loc)}")
         checks.append(
             {
                 "expected": expected,
@@ -235,23 +367,22 @@ def _verify_blender(
                     "name": obj.get("name"),
                     "type": obj.get("type"),
                     "location": obj.get("location"),
+                    "dimensions": obj.get("dimensions"),
+                    "scale": obj.get("scale"),
+                    "light": obj.get("light"),
                 },
                 "problems": problems,
             }
         )
 
-    all_passed = all(check["passed"] for check in checks)
+    all_passed = bool(checks) and all(check["passed"] for check in checks)
     return all_passed, {
         "passed": all_passed,
-        "scene": str(scene),
         "objects": objects,
         "checks": checks,
     }
 
 
-# ---------------------------------------------------------------------------
-# UE5 verification through a fresh MCP session
-# ---------------------------------------------------------------------------
 def _verify_ue5(
     url: str, expectations: dict[str, Any], *, timeout_seconds: int = 60
 ) -> tuple[bool, dict[str, Any]]:

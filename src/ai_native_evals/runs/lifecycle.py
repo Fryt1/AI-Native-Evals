@@ -78,6 +78,13 @@ def prepare_run(
     system_prompt_path = agent_config_dir / "agent-system-prompt.txt"
     if spec.agent_profile.system_prompt:
         system_prompt_path.write_text(spec.agent_profile.system_prompt, encoding="utf-8")
+    # The task prompt is written to a file and read from there, not passed as a
+    # command-line argument. Prompts are Markdown: they contain newlines, pipes,
+    # backticks and lists. Handing that to `docker run` as one argument loses
+    # structure -- a table's rows vanished and the Agent reported the missing
+    # names as an ambiguity in the request rather than a delivery fault.
+    task_prompt_path = agent_config_dir / "task-prompt.md"
+    task_prompt_path.write_text(spec.task_prompt, encoding="utf-8")
     dsh_runner_source = repo_root / "docker" / "dsh-agent" / "acp-runner.mjs"
     dsh_runner_path = agent_config_dir / "dsh-acp-runner.mjs"
     if dsh_runner_source.is_file():

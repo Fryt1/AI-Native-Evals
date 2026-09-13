@@ -14,7 +14,11 @@ from ..adapters.run_digest import digest_run
 from ..plans import CheckSpec, TestPlan, TestPlanError
 from ..runs.agent_sandbox import default_readonly_mounts, run_evaluator_agent
 from ..runs.lifecycle import load_manifest, update_manifest
-from ..scorers.multi_dcc_host_verifier import _verify_blender, _verify_ue5
+from ..scorers.multi_dcc_host_verifier import (
+    _verify_blender,
+    _verify_blender_live,
+    _verify_ue5,
+)
 from .contracts import CheckResult, EvaluationReport
 
 Evaluator = Callable[["EvaluationContext", CheckSpec], CheckResult]
@@ -574,6 +578,58 @@ def _ue5_state(context: EvaluationContext, check: CheckSpec) -> CheckResult:
         details=findings,
         evidence_refs=(),
         error=None if passed else "UE5 state did not satisfy expectations",
+        started_at=started,
+        finished_at=_utc_now(),
+    )
+
+
+@register_evaluator("script.blender_live_scene.v1")
+def _blender_live_scene(context: EvaluationContext, check: CheckSpec) -> CheckResult:
+    """Read the host Blender scene through MCP, without a saved file.
+
+    Blender is a host service. A `.blend` it saves lands on the *host*
+    filesystem, and its notion of `/workspace` is its own working directory --
+    not the container path of the same name. A Task that needs a saved file is
+    therefore coupled to how the host was started.
+
+    Reading the live scene avoids that coupling entirely: the check opens its
+    own MCP connection to the running Blender and asks what is in the scene now.
+    It is also the stronger check, because it cannot be satisfied by a file the
+    Agent wrote by hand.
+    """
+    started = _utc_now()
+    expectations = check.config.get("objects")
+    if not isinstance(expectations, list):
+        return _error_result(check, started, "blender_live_scene requires config.objects list")
+    absent = check.config.get("absent") or []
+    if not isinstance(absent, list):
+        return _error_result(check, started, "config.absent must be a list of names")
+    host = str(check.config.get("host", "127.0.0.1"))
+    port = int(check.config.get("port", 9876))
+    try:
+        passed, findings = _verify_blender_live(
+            host,
+            port,
+            expectations,
+            absent=[str(name) for name in absent],
+            timeout_seconds=check.timeout_seconds or 60,
+        )
+    except (OSError, ValueError) as exc:
+        return _error_result(check, started, f"Blender verification failed: {exc}")
+    # Written as an artifact so a later quality check can read the same evidence
+    # the outcome check used. Judging a findings dict directly is not possible:
+    # an artifact reference resolves to a path.
+    artifact = _write_check_artifact(context, check, findings, "blender-scene.json")
+    return CheckResult(
+        check_id=check.id,
+        phase=check.phase,
+        evaluator=check.evaluator,
+        status="passed" if passed else "failed",
+        passed=passed,
+        score=1.0 if passed else 0.0,
+        details={**findings, "selected_artifact": artifact},
+        evidence_refs=(artifact,),
+        error=None if passed else "Blender scene did not satisfy expectations",
         started_at=started,
         finished_at=_utc_now(),
     )
@@ -1180,6 +1236,25 @@ def _write_check_result(evidence_dir: Path, result: CheckResult) -> None:
     checks_dir = evidence_dir / "checks"
     checks_dir.mkdir(parents=True, exist_ok=True)
     _write_json(checks_dir / f"{result.check_id}.json", result.to_dict())
+
+
+def _write_check_artifact(
+    context: EvaluationContext, check: CheckSpec, payload: Any, filename: str
+) -> str:
+    """Persist a check's raw evidence and return its container-visible path.
+
+    A later check can only read an artifact by path, so evidence a Rubric needs
+    to judge has to be written out rather than kept in the findings dict.
+    """
+    directory = context.evidence_dir / "artifacts"
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"{check.id}-{filename}"
+    _write_json(path, payload)
+    try:
+        relative = path.relative_to(context.workspace_dir.resolve())
+    except ValueError:
+        return str(path)
+    return f"/workspace/{relative.as_posix()}"
 
 
 def _write_json(path: Path, value: Any) -> None:

@@ -20,6 +20,27 @@ if [ "${EVAL_OUTER_SANDBOX:-docker}" = "docker" ]; then
   CODEX_ARGS="--dangerously-bypass-approvals-and-sandbox"
 fi
 
+# The Task prompt arrives as a mounted file, not as an argument. A prompt is
+# Markdown -- blank lines, pipes, backticks, lists -- and an argument list cannot
+# carry that faithfully: passing it inline lost a table's rows, and the Agent
+# reported the missing names as an ambiguity in the request rather than as a
+# fault in delivery.
+if [ "$#" -eq 0 ]; then
+  PROMPT_FILE="${EVAL_TASK_PROMPT_FILE:-/run-config/task-prompt.md}"
+  if [ ! -s "$PROMPT_FILE" ]; then
+    echo "No prompt: pass one as an argument or set EVAL_TASK_PROMPT_FILE" >&2
+    exit 2
+  fi
+  # Codex reads the instructions from stdin when no PROMPT argument is given.
+  exec codex ${CODEX_ARGS} exec \
+    --json \
+    --ephemeral \
+    --skip-git-repo-check \
+    --cd "$WORKDIR" \
+    --output-last-message "$LAST_MESSAGE_PATH" \
+    < "$PROMPT_FILE"
+fi
+
 exec codex ${CODEX_ARGS} exec \
   --json \
   --ephemeral \

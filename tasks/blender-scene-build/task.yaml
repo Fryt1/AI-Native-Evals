@@ -1,0 +1,90 @@
+id: blender-scene-build
+version: 1
+prompt_file: prompt.md
+# No repository resource: the subject is a Blender scene, not a code checkout, and
+# a Task with no resources must not create a snapshot.
+resources: []
+execution:
+  # `codex-blender` works in /workspace and declares only Blender. `codex-dcc`
+  # would also work, but its workdir is a project mount this Task does not
+  # create, and its usual MCP profile adds unreal-mcp -- a UE5 dependency for a
+  # task that never touches UE5.
+  agent: codex-blender
+  mcp_profile: blender-host
+test_plan:
+  version: 1
+  quality_threshold: 0.8
+  checks:
+  # Read the live host scene over MCP. Blender is a host service, so a `.blend`
+  # it saves lands on the host filesystem and its `/workspace` means its own
+  # working directory -- not the container path of the same name. Checking the
+  # live scene avoids depending on how the host was started, and is the stronger
+  # check: it cannot be satisfied by a file the Agent wrote by hand.
+  - id: scene-objects
+    phase: outcome
+    evaluator: script.blender_live_scene.v1
+    config:
+      host: 127.0.0.1
+      port: 9876
+      objects:
+      - name: EvalTable
+        type: MESH
+        location: [0.0, 0.0, 0.75]
+      - name: EvalLamp
+        type: LIGHT
+        location: [2.0, 0.0, 3.0]
+      - name: EvalCamera
+        type: CAMERA
+        location: [6.0, -6.0, 4.0]
+    required: true
+    on_error: fail
+  - id: scene-clean
+    phase: outcome
+    evaluator: script.blender_live_scene.v1
+    config:
+      host: 127.0.0.1
+      port: 9876
+      # The default scene's own three objects must be gone. Each is checked by
+      # name with no type, which asserts absence rather than shape.
+      objects: []
+      absent:
+      - Cube
+      - Light
+      - Camera
+    required: false
+    on_error: review
+    depends_on:
+    - scene-objects
+  - id: build-quality
+    phase: quality
+    evaluator: agent.quality_judge.v1
+    # The judged artifact is the read-back file, which carries dimensions and
+    # light configuration. Judging only name, kind and origin left the shape and
+    # lighting criteria unverifiable.
+    input:
+      artifact: scene-objects.selected_artifact
+    config:
+      prompt: prompts/quality/blender-scene-v1.md
+      rubric: rubric.yaml
+    required: false
+    weight: 1.0
+    on_error: review
+    depends_on:
+    - scene-objects
+    - scene-clean
+  # How the Agent worked: a scene edited through the Blender MCP tools looks
+  # different in the trace from one assembled by shelling out to Blender.
+  - id: build-process
+    phase: process
+    evaluator: trace.process_analyzer.v1
+    config:
+      metrics:
+      - tool_failures
+      - retries
+      - verification_before_finish
+    required: false
+    weight: 1.0
+    on_error: review
+    depends_on:
+    - scene-objects
+rubric_file: rubric.yaml

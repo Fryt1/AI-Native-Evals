@@ -67,7 +67,11 @@ def test_agent_command_mounts_snapshot_and_prompt(tmp_path: Path) -> None:
     assert "/workspace/game-engine" in args
     assert "type=bind" in " ".join(args)
     assert "/workspace" in " ".join(args)
-    assert args[-2:] == ["test-agent", "Create a cube through Blender MCP."]
+    # A profile with no command passes no prompt argument; the entrypoint reads
+    # the mounted file. The prompt text must not appear anywhere in the argv.
+    assert args[-1] == "test-agent"
+    assert "Create a cube through Blender MCP." not in " ".join(args)
+    assert "EVAL_TASK_PROMPT_FILE=/run-config/task-prompt.md" in args
 
 
 def test_start_docker_run_records_runtime_without_calling_docker(
@@ -120,9 +124,11 @@ def test_agent_profile_controls_entrypoint_and_command_without_codex_branch(tmp_
     assert args[args.index("--entrypoint") + 1] == "node"
     assert "/tmp/dsh-home:rw" in " ".join(args)
     image_index = args.index("test-dsh")
+    # `${TASK_PROMPT}` becomes the mounted file's path, not the prompt text: a
+    # Markdown prompt passed as one argument loses its structure.
     assert args[image_index + 1 :] == [
         "/run-config/dsh-acp-runner.mjs",
-        "Create a cube through Blender MCP.",
+        "/run-config/task-prompt.md",
     ]
 
 

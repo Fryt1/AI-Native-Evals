@@ -29,6 +29,9 @@ class DockerTimeoutError(DockerRuntimeError):
 
 _DEFAULT_WSL_DISTRO = "Ubuntu-20.04"
 _DEFAULT_GATEWAY_IMAGE = "ai-native-llm-gateway:local"
+#: Where the run's Task prompt is mounted inside the container. The prompt text
+#: is never passed as a command argument; see `_agent_run_args`.
+_PROMPT_FILE = "/run-config/task-prompt.md"
 # No Docker call may block forever. `docker wait` overrides this with the run's
 # own Agent time limit, which is far longer by design.
 _DEFAULT_DOCKER_TIMEOUT_SECONDS = 300
@@ -366,6 +369,8 @@ def _agent_run_args(
         "--env",
         "EVAL_SYSTEM_PROMPT_FILE=/run-config/agent-system-prompt.txt",
         "--env",
+        f"EVAL_TASK_PROMPT_FILE={_PROMPT_FILE}",
+        "--env",
         f"EVAL_RUN_ID={run['run_id']}",
         "--env",
         f"EVAL_TASK_ID={run['task_id']}",
@@ -383,14 +388,22 @@ def _agent_run_args(
         command = [command]
     if not isinstance(command, list):
         command = []
+    # `${TASK_PROMPT}` resolves to the path of the mounted prompt file, never to
+    # the prompt text. A Task prompt is Markdown -- newlines, pipes, backticks --
+    # and passing that as a single `docker run` argument loses its structure: a
+    # table's rows disappeared and the Agent reported the missing names as an
+    # ambiguity in the request rather than as a delivery fault.
     rendered_command = [
         _render_runtime_value(str(value), run, workdir)
         for value in command
     ]
     if not rendered_command:
-        rendered_command = [str(run["task_prompt"])]
+        # No command of its own: the entrypoint reads the prompt file itself.
+        pass
     elif "${TASK_PROMPT}" not in command:
-        rendered_command.append(str(run["task_prompt"]))
+        # A custom command that does not mention the prompt receives its path, so
+        # it can read the text itself rather than be handed a mangled copy.
+        rendered_command.append(_PROMPT_FILE)
     entrypoint = profile.get("entrypoint")
     if isinstance(entrypoint, str) and entrypoint:
         args.extend(["--entrypoint", entrypoint])
@@ -401,7 +414,7 @@ def _agent_run_args(
 def _render_runtime_value(value: str, run: dict[str, Any], workdir: str) -> str:
     """Resolve only non-secret run placeholders in a profile command/env."""
     return (
-        value.replace("${TASK_PROMPT}", str(run.get("task_prompt", "")))
+        value.replace("${TASK_PROMPT}", _PROMPT_FILE)
         .replace("${TASK_ID}", str(run.get("task_id", "")))
         .replace("${RUN_ID}", str(run.get("run_id", "")))
         .replace("${WORKDIR}", workdir)

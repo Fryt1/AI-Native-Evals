@@ -1,0 +1,19 @@
+criteria:
+  - id: table_plausible
+    description: >-
+      EvalTable is shaped like a table rather than left as an unscaled default
+      cube: it is wider than it is tall, and its top surface sits near the
+      stated origin height.
+    weight: 1.0
+  - id: scene_clean
+    description: >-
+      The saved scene contains the three required objects and no leftover
+      scratch objects, temporary duplicates, or abandoned attempts.
+    weight: 1.0
+  - id: lighting_usable
+    description: >-
+      EvalLamp is configured as a working light rather than an unconfigured
+      default: it has non-zero energy and its position actually illuminates the
+      table from above.
+    weight: 0.5
+passing_score: 0.8

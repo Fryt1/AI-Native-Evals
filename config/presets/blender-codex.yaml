@@ -1,0 +1,9 @@
+id: blender-codex
+agent: codex-blender
+provider: sub2api
+model: gpt-5.6-luna
+reasoning_effort: high
+# Blender only. The dcc-codex preset also declares unreal-mcp, which would make
+# a Blender task depend on a UE5 editor being open for no reason.
+mcp_profile: blender-host
+sandbox_profile: docker-default

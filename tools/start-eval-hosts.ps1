@@ -8,6 +8,12 @@ param(
     [string]$UnrealExecutable = $env:AI_NATIVE_EVALS_UNREAL_EXE,
     [string]$UnrealProject = $env:AI_NATIVE_EVALS_UNREAL_PROJECT,
     [int]$UnrealPort = 8000,
+    # Blender resolves a leading `/workspace` against its own working directory,
+    # so where this process starts decides where an Agent's `/workspace/...`
+    # saves actually land. Point it at the directory the runs' workspaces live
+    # under, or a Task that saves through MCP will write somewhere the run
+    # cannot read.
+    [string]$HostWorkspaceDirectory = $env:AI_NATIVE_EVALS_HOST_WORKSPACE,
     [int]$TimeoutSeconds = 120
 )
 
@@ -88,8 +94,31 @@ $ueLog = Join-Path $CacheDir "ue5-mcp-run.log"
 $ueErr = Join-Path $CacheDir "ue5-mcp-run.err.log"
 
 if (-not (Test-Listening $BlenderPort)) {
+    # `--command blender_mcp` is how Blender 5.x starts the bundled MCP server.
+    # Three things about it are easy to get wrong and each cost a debugging
+    # round: `--background` must precede `--command`; `--factory-startup` must
+    # NOT be used, because it disables the user-installed addon that provides
+    # the command; and online access has to be granted or Blender refuses to
+    # start it at all.
+    #
+    # `--host 0.0.0.0` matters as much as the port: the addon defaults to
+    # localhost, which the container cannot reach.
+    $blenderArguments = @(
+        "--background",
+        "--online-mode",
+        "--command", "blender_mcp",
+        "--host", "0.0.0.0",
+        "--port", "$BlenderPort"
+    )
+    if ($BlenderBootstrap) {
+        # A bootstrap script is still honoured, for deployments that start the
+        # bridge their own way; it runs as an extra Python step before startup.
+        $blenderArguments = @("--background", "--python", $BlenderBootstrap) +
+            $blenderArguments[1..($blenderArguments.Count - 1)]
+    }
     $blender = Start-Process -FilePath $BlenderExecutable `
-        -ArgumentList @("--background", "--python", $BlenderBootstrap) `
+        -ArgumentList $blenderArguments `
+        -WorkingDirectory $HostWorkspaceDirectory `
         -WindowStyle Hidden -PassThru `
         -RedirectStandardOutput $blenderLog -RedirectStandardError $blenderErr
     Set-Content -LiteralPath (Join-Path $CacheDir "blender-bridge.pid") -Value $blender.Id
