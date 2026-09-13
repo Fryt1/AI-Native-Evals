@@ -196,18 +196,46 @@ function AgentsSection({ agents }: { agents: RegistryEntry[] }) {
                   <span className={`preflight-status ${report.usable ? "ok" : "missing"}`}>
                     {report.level === "smoke" ? "真实测试" : "静态检查"} · {report.usable ? "通过" : "未通过"}
                   </span>
-                  {Object.entries(report.checks).map(([name, check]) => (
-                    <div className={`agent-check-item ${check.status}`} key={name}>
-                      <span className="agent-check-mark" aria-hidden="true">
-                        {check.status === "ok" ? "✓" : check.status === "missing" ? "×" : "?"}
-                      </span>
-                      <div>
-                        <strong>{AGENT_CHECK_LABELS[name] || name}</strong>
-                        {check.detail && <p>{check.detail}</p>}
-                        {check.hint && check.status !== "ok" && <p className="agent-check-hint">→ {check.hint}</p>}
+                  {
+                    /* Two groups, because the findings are not the same kind of
+                       fact: one is read from files, the other from a container
+                       that actually started. Listing them together left the
+                       operator unable to tell a well-formed profile from a
+                       working one. */
+                  }
+                  {(["static", "smoke"] as const).map((group) => {
+                    const names = Object.keys(report.checks).filter(
+                      (name) => (report.checks[name].level || "static") === group,
+                    );
+                    if (!names.length) return null;
+                    return (
+                      <div className="agent-check-group" key={group}>
+                        <div className="agent-check-group-head">
+                          <strong>{group === "static" ? "静态检查" : "真实测试"}</strong>
+                          <small>
+                            {group === "static"
+                              ? "读取 profile 与镜像信息，不启动任何东西"
+                              : "启动容器并让 Agent 回答一句话"}
+                          </small>
+                        </div>
+                        {names.map((name) => {
+                          const check = report.checks[name];
+                          return (
+                            <div className={`agent-check-item ${check.status}`} key={name}>
+                              <span className="agent-check-mark" aria-hidden="true">
+                                {check.status === "ok" ? "✓" : check.status === "missing" ? "×" : "?"}
+                              </span>
+                              <div>
+                                <strong>{AGENT_CHECK_LABELS[name] || name}</strong>
+                                {check.detail && <p>{check.detail}</p>}
+                                {check.hint && check.status !== "ok" && <p className="agent-check-hint">→ {check.hint}</p>}
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
               {result?.error && <p className="agent-check-hint">→ {result.error}</p>}

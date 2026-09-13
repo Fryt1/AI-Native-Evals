@@ -189,6 +189,8 @@ export type ReasoningLevels = {
 export type PreflightCheck = {
   status: "ok" | "missing" | "unknown";
   ok: boolean;
+  /** How the finding was obtained: read from files, or from a started container. */
+  level?: "static" | "smoke";
   detail?: string;
   hint?: string;
 };

@@ -47,20 +47,50 @@ GATEWAY_IMAGE = "ai-native-llm-gateway:local"
 
 @dataclass(slots=True)
 class AgentCheck:
-    """One verified (or unverifiable) property of an Agent."""
+    """One verified (or unverifiable) property of an Agent.
+
+    `level` records how the finding was obtained, because that decides how much
+    it is worth. `static` findings come from reading files and inspecting an
+    image; `smoke` findings come from a container that actually started. A
+    report that mixed the two in one list left the operator unable to tell a
+    well-formed profile from a working one.
+    """
 
     name: str
     status: str  # ok | missing | unknown
+    level: str = ""  # static | smoke; derived from the name when left blank
     detail: str = ""
     hint: str = ""
 
+    def __post_init__(self) -> None:
+        if not self.level:
+            self.level = check_level(self.name)
+
     def to_dict(self) -> dict[str, Any]:
-        payload: dict[str, Any] = {"status": self.status, "ok": self.status == "ok"}
+        payload: dict[str, Any] = {
+            "status": self.status,
+            "ok": self.status == "ok",
+            "level": self.level,
+        }
         if self.detail:
             payload["detail"] = self.detail
         if self.status != "ok" and self.hint:
             payload["hint"] = self.hint
         return payload
+
+
+#: Checks that only a started container can answer. Everything else is read
+#: from files, so it can be established without starting anything.
+_SMOKE_CHECKS = frozenset({"credentials", "container", "exit", "reply", "smoke"})
+
+
+def check_level(name: str) -> str:
+    """How a check is established, derived from its name.
+
+    One list, so a new check cannot be added with a level that disagrees with
+    what it actually does.
+    """
+    return "smoke" if name in _SMOKE_CHECKS else "static"
 
 
 @dataclass(slots=True)
@@ -98,6 +128,10 @@ class AgentReport:
             "usable": self.usable,
             "checked_at": self.checked_at,
             "checks": {check.name: check.to_dict() for check in self.checks},
+            # Grouped so a reader can see at a glance which findings came from
+            # reading files and which from a container that actually started.
+            "static": [c.name for c in self.checks if c.level == "static"],
+            "smoke": [c.name for c in self.checks if c.level == "smoke"],
             "failed": [c.name for c in self.checks if c.status == "missing"],
             "unknown": [c.name for c in self.checks if c.status == "unknown"],
         }

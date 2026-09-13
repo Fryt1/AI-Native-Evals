@@ -28,6 +28,7 @@ from ai_native_evals.runs.agent_check import (
     AgentReport,
     _agent_args,
     _parse_container_exit,
+    check_level,
     check_static,
     diagnose,
     extract_reply,
@@ -65,6 +66,77 @@ def test_a_healthy_report_is_usable() -> None:
 
     assert report.usable is True
     assert report.to_dict()["failed"] == []
+
+
+# --- what a finding is worth ------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("profile", "static"),
+        ("adapter", "static"),
+        ("image", "static"),
+        ("capabilities", "static"),
+        ("container", "smoke"),
+        ("reply", "smoke"),
+        ("exit", "smoke"),
+        ("credentials", "smoke"),
+    ],
+)
+def test_a_check_knows_how_it_was_established(name: str, expected: str) -> None:
+    """Reading files and starting a container are not the same kind of fact.
+
+    The report used to mix them in one list, so a well-formed profile looked
+    exactly like a working one.
+    """
+    assert check_level(name) == expected
+
+
+def test_a_check_derives_its_level_from_its_name() -> None:
+    assert AgentCheck("reply", "ok").level == "smoke"
+    assert AgentCheck("profile", "ok").level == "static"
+
+
+def test_an_explicit_level_is_not_overwritten() -> None:
+    """A caller that knows better keeps its own answer."""
+    assert AgentCheck("custom", "ok", level="smoke").level == "smoke"
+
+
+def test_every_check_carries_its_level_into_the_payload() -> None:
+    payload = AgentCheck("container", "ok", detail="started").to_dict()
+
+    assert payload["level"] == "smoke"
+
+
+def test_the_report_groups_checks_by_how_they_were_obtained() -> None:
+    report = AgentReport(agent="a", image="i", level="smoke")
+    report.add(AgentCheck("profile", "ok"))
+    report.add(AgentCheck("image", "ok"))
+    report.add(AgentCheck("container", "ok"))
+    report.add(AgentCheck("reply", "ok"))
+
+    payload = report.to_dict()
+
+    assert payload["static"] == ["profile", "image"]
+    assert payload["smoke"] == ["container", "reply"]
+
+
+def test_a_static_report_has_no_smoke_group() -> None:
+    report = check_static(REPO, "codex").to_dict()
+
+    assert report["static"]
+    assert report["smoke"] == []
+
+
+def test_the_two_groups_never_overlap_or_lose_a_check() -> None:
+    """Every check is in exactly one group, whatever its status."""
+    report = AgentReport(agent="a", image="i", level="smoke")
+    for name in ("profile", "adapter", "image", "capabilities", "container", "reply", "exit"):
+        report.add(AgentCheck(name, "ok"))
+    payload = report.to_dict()
+
+    assert sorted(payload["static"] + payload["smoke"]) == sorted(payload["checks"])
 
 
 # --- static verification -----------------------------------------------------
