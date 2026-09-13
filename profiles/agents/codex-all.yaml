@@ -1,6 +1,11 @@
 id: codex-all
+label: Codex（全部宿主能力）
+description: 可用 Blender、UE5、ComfyUI 与 Hugging Face；能力最全，用于跨工具链的测试。
 adapter: codex
-image: ai-native-codex-agent:all-mcp
+# One Codex image, one tag. It bundles the MCP runtimes because a bundled
+# binary is availability, not configuration -- which servers a run actually
+# gets comes from its MCP profile.
+image: ai-native-codex-agent:local
 protocol: responses
 workdir: /workspace/game-engine
 writable_paths:

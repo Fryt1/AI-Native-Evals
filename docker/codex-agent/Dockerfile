@@ -78,7 +78,6 @@ ENV EVAL_GATEWAY_URL=http://llm-gateway:8080/v1
 ENV EVAL_REASONING_EFFORT=high
 ENV BLENDER_MCP_HOST=host.docker.internal
 ENV BLENDER_MCP_PORT=9876
-ENV EVAL_ENABLE_BLENDER_MCP=1
 
 COPY cache/codex/openai-codex.tgz /tmp/openai-codex.tgz
 COPY cache/codex/codex-linux-x64.tgz /tmp/codex-linux-x64.tgz

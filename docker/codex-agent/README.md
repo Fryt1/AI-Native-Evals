@@ -7,7 +7,7 @@ The entrypoint creates an isolated `CODEX_HOME` and points Codex at the
 AI-Native LLM Gateway. The Gateway credential is supplied as
 `EVAL_GATEWAY_API_KEY`; upstream model credentials never enter this container.
 
-The full image also includes the standard MCP clients needed by the project:
+The image also includes the standard MCP clients needed by the project:
 
 ```text
 blender-host  -> official blender-mcp stdio server -> host Blender
@@ -38,14 +38,20 @@ Blender MCP source during the image build:
 ```powershell
 wsl.exe -d Ubuntu-20.04 -- docker build \
   -f /mnt/d/work/AI-Native/AI-Native-Evals/docker/codex-agent/Dockerfile \
-  -t ai-native-codex-agent:all-mcp \
+  -t ai-native-codex-agent:local \
   /mnt/d/work/AI-Native/AI-Native-Evals
 ```
 
 The official Blender MCP source is pinned in the Dockerfile by commit SHA. The official ComfyUI MCP and comfy-cli versions are pinned as build arguments.
 
-## Disable Blender MCP for a diagnostic run
+## There is one Codex image
 
-```text
-EVAL_ENABLE_BLENDER_MCP=0
-```
+It bundles the MCP runtimes on purpose, and there is no MCP-less variant.
+
+Bundling is availability, not configuration: a binary sitting in the image
+enables nothing, and which servers a run actually gets is decided entirely by
+its MCP profile. A second, leaner image bought nothing and cost correctness --
+a task that needs Blender could be pointed at the MCP-less image and would then
+run *without* Blender, silently, because a missing stdio binary does not fail a
+run. It only removes tools the Agent was supposed to have, which is
+indistinguishable from success in the resulting report.

@@ -1,10 +1,12 @@
 [CmdletBinding()]
 param(
-    [string]$BlenderExecutable = "E:\blender\blender.exe",
-    [string]$BlenderBootstrap = "D:\work\AI-Native-Game-Engine\artifacts\leopard2a4\mcp_bootstrap.py",
+    # Every path below is a local deployment detail and has no safe machine-independent
+    # default. Supply them explicitly, or set the matching environment variable.
+    [string]$BlenderExecutable = $env:AI_NATIVE_EVALS_BLENDER_EXE,
+    [string]$BlenderBootstrap = $env:AI_NATIVE_EVALS_BLENDER_BOOTSTRAP,
     [int]$BlenderPort = 9876,
-    [string]$UnrealExecutable = "D:\UnrealEngine\ue5.8.2\UnrealEngine\Engine\Binaries\Win64\UnrealEditor.exe",
-    [string]$UnrealProject = "D:\work\AI-Native\EvalRuns\ue5-host-fixture\ActorFixture.uproject",
+    [string]$UnrealExecutable = $env:AI_NATIVE_EVALS_UNREAL_EXE,
+    [string]$UnrealProject = $env:AI_NATIVE_EVALS_UNREAL_PROJECT,
     [int]$UnrealPort = 8000,
     [int]$TimeoutSeconds = 120
 )
@@ -13,7 +15,23 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $CacheDir = Join-Path $RepoRoot "cache"
 $FixtureSource = Join-Path $RepoRoot "fixtures\ue5\actor-fixture-mcp"
-$FixtureRoot = Split-Path $UnrealProject -Parent
+
+# The UE5 fixture project is created by this script when none was supplied, so a
+# blank value is valid rather than an error.
+$FixtureRoot = if ($UnrealProject) { Split-Path $UnrealProject -Parent } else { Join-Path $RepoRoot "..\EvalRuns\ue5-host-fixture" }
+if (-not $UnrealProject) {
+    $UnrealProject = Join-Path $FixtureRoot "ActorFixture.uproject"
+}
+
+if ($BlenderBootstrap -and -not (Test-Path -LiteralPath $BlenderBootstrap)) {
+    throw "BlenderBootstrap does not exist: $BlenderBootstrap`nSet -BlenderBootstrap or `$env:AI_NATIVE_EVALS_BLENDER_BOOTSTRAP."
+}
+if ($UnrealExecutable -and -not (Test-Path -LiteralPath $UnrealExecutable)) {
+    throw "UnrealExecutable does not exist: $UnrealExecutable`nSet -UnrealExecutable or `$env:AI_NATIVE_EVALS_UNREAL_EXE."
+}
+if ($BlenderExecutable -and -not (Test-Path -LiteralPath $BlenderExecutable)) {
+    throw "BlenderExecutable does not exist: $BlenderExecutable`nSet -BlenderExecutable or `$env:AI_NATIVE_EVALS_BLENDER_EXE."
+}
 
 function Test-Listening([int]$Port) {
     return [bool](Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)

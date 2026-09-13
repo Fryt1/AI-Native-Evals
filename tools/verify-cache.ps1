@@ -62,7 +62,7 @@ if ($CheckDockerImages) {
     if (-not (Get-Command wsl.exe -ErrorAction SilentlyContinue)) {
         $errors.Add("wsl.exe is not available")
     } else {
-        foreach ($image in @("python:3.12-slim", "node:22-bookworm", "ai-native-llm-gateway:local", "ai-native-codex-agent:local", "ai-native-codex-agent:all-mcp")) {
+        foreach ($image in @("python:3.12-slim", "node:22-bookworm", "ai-native-llm-gateway:local", "ai-native-codex-agent:local")) {
             & wsl.exe -d $Distro -- docker image inspect $image *> $null
             if ($LASTEXITCODE -ne 0) {
                 $errors.Add("Docker image is not loaded: $image")

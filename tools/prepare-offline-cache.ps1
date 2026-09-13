@@ -66,25 +66,25 @@ foreach ($image in @($PythonBaseImage, $NodeBaseImage)) {
     }
 }
 
-# A lock is generated from a known-good all-mcp image when requested. The
-# Blender local source package itself is intentionally not put in the PyPI
-# wheelhouse; it is installed from vendor/blender-mcp/mcp.tar.gz.
-$allMcpExists = $false
-& wsl.exe -d $Distro -- docker image inspect ai-native-codex-agent:all-mcp *> $null
-$allMcpExists = $LASTEXITCODE -eq 0
+# A lock is generated from a known-good image when requested. The Blender local
+# source package itself is intentionally not put in the PyPI wheelhouse; it is
+# installed from vendor/blender-mcp/mcp.tar.gz.
+$codexImageExists = $false
+& wsl.exe -d $Distro -- docker image inspect ai-native-codex-agent:local *> $null
+$codexImageExists = $LASTEXITCODE -eq 0
 if ($RegenerateLocks) {
-    if (-not $allMcpExists) {
-        throw "-RegenerateLocks requires ai-native-codex-agent:all-mcp to exist"
+    if (-not $codexImageExists) {
+        throw "-RegenerateLocks requires ai-native-codex-agent:local to exist"
     }
-    Write-Host "Regenerating Python locks from ai-native-codex-agent:all-mcp..."
+    Write-Host "Regenerating Python locks from ai-native-codex-agent:local..."
     $blenderLock = Join-Path $PythonCache "blender-mcp\requirements.lock"
     $comfyLock = Join-Path $PythonCache "comfy-mcp\requirements.lock"
-    wsl.exe -d $Distro -- docker run --rm --entrypoint /bin/sh ai-native-codex-agent:all-mcp `
+    wsl.exe -d $Distro -- docker run --rm --entrypoint /bin/sh ai-native-codex-agent:local `
         -c "/opt/blender-mcp/bin/pip freeze" 2>&1 |
         Where-Object { $_ -notmatch '^blender-mcp @ ' } |
         Set-Content -Path $blenderLock -Encoding utf8
     if ($LASTEXITCODE -ne 0) { throw "Could not regenerate Blender lock" }
-    wsl.exe -d $Distro -- docker run --rm --entrypoint /bin/sh ai-native-codex-agent:all-mcp `
+    wsl.exe -d $Distro -- docker run --rm --entrypoint /bin/sh ai-native-codex-agent:local `
         -c "/opt/comfy-mcp/bin/pip freeze" 2>&1 |
         Set-Content -Path $comfyLock -Encoding utf8
     if ($LASTEXITCODE -ne 0) { throw "Could not regenerate Comfy lock" }
@@ -95,7 +95,7 @@ foreach ($lock in @(
     (Join-Path $PythonCache "comfy-mcp\requirements.lock")
 )) {
     if (-not (Test-Path $lock)) {
-        throw "Missing lock file: $lock. Run with -RegenerateLocks after building all-mcp."
+        throw "Missing lock file: $lock. Run with -RegenerateLocks after building the Codex image."
     }
 }
 
@@ -128,8 +128,7 @@ if (-not $SkipImageSave) {
         $PythonBaseImage,
         $NodeBaseImage,
         "ai-native-llm-gateway:local",
-        "ai-native-codex-agent:local",
-        "ai-native-codex-agent:all-mcp"
+        "ai-native-codex-agent:local"
     )
     $available = @()
     foreach ($image in $images) {

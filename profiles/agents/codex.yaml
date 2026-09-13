@@ -1,4 +1,6 @@
 id: codex
+label: Codex（纯文件）
+description: 只做文件与命令操作，不访问宿主机 DCC。适合不需要 Blender / UE5 的测试。
 adapter: codex
 image: ai-native-codex-agent:local
 protocol: responses

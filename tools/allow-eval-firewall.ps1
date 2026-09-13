@@ -1,6 +1,8 @@
 param([switch]$Execute)
 $ErrorActionPreference = 'Stop'
-$log = 'D:\work\AI-Native\AI-Native-Evals\cache\eval-firewall.log'
+# Derived from this script's own location, so the repository can live anywhere.
+$repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$log = Join-Path $repo 'cache\eval-firewall.log'
 
 function Log($m) { Add-Content -LiteralPath $log -Value ("{0} {1}" -f (Get-Date -Format o), $m) }
 
@@ -28,6 +30,12 @@ Log 'elevated-start'
 
 function Add-EvalRule {
   param([string]$Name,[string]$Program,[int]$Port)
+  if (-not $Program) {
+    # Say so instead of creating a rule with an empty program, which would
+    # silently allow nothing (or worse, match unintended traffic).
+    Log "skipped $Name (tcp/$Port): no program configured"
+    return
+  }
   $exists = Get-NetFirewallRule -DisplayName $Name -ErrorAction SilentlyContinue
   if ($exists) { Log "exists $Name"; return }
   try {
@@ -36,7 +44,9 @@ function Add-EvalRule {
   } catch { Log ("fail ${Name}: " + $_.Exception.Message) }
 }
 
-Add-EvalRule -Name 'AI-Native Eval UE5 MCP 8000' -Program 'D:\UnrealEngine\ue5.8.2\UnrealEngine\Engine\Binaries\Win64\UnrealEditor.exe' -Port 8000
-Add-EvalRule -Name 'AI-Native Eval Blender MCP 9876' -Program 'E:\blender\blender.exe' -Port 9876
-Add-EvalRule -Name 'AI-Native Eval ComfyUI 8188' -Program 'D:\work\Comfyui\ComfyUI-aki-v3.2\python\python.exe' -Port 8188
+# Host application paths are local deployment details with no portable default.
+# Supply the ones you use through these environment variables.
+Add-EvalRule -Name 'AI-Native Eval UE5 MCP 8000' -Program $env:AI_NATIVE_EVALS_UNREAL_EXE -Port 8000
+Add-EvalRule -Name 'AI-Native Eval Blender MCP 9876' -Program $env:AI_NATIVE_EVALS_BLENDER_EXE -Port 9876
+Add-EvalRule -Name 'AI-Native Eval ComfyUI 8188' -Program $env:AI_NATIVE_EVALS_COMFY_PYTHON -Port 8188
 Log 'done'

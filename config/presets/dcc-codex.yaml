@@ -1,5 +1,7 @@
 id: dcc-codex
 agent: codex-dcc
-model_profile: sub2api-deepseek
+provider: sub2api
+model: gpt-5.6-luna
+reasoning_effort: high
 mcp_profile: blender-ue5-host
 sandbox_profile: docker-default

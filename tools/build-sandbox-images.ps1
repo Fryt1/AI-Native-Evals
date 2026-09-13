@@ -2,8 +2,8 @@
 param(
     [string]$Distro = "Ubuntu-20.04",
     [switch]$UseMirror,
-    [Alias("IncludeAllMcp")]
-    [switch]$IncludeBlenderMcp,
+    [Alias("IncludeBlenderMcp")]
+    [switch]$SkipMcp,
     [switch]$Offline,
     [switch]$IncludeDsh,
     [switch]$IncludeDshRelease,
@@ -43,7 +43,10 @@ if ($Offline) {
     }
     Write-Host "Loading cached Docker images..."
     Invoke-Docker @("load", "-i", $Archive)
-    & pwsh -NoProfile -File $verify -Distro $Distro -RequireDockerArchive
+    # Use whichever PowerShell is running this script; `pwsh` is not on PATH
+    # on a Windows PowerShell 5.1 host, and requiring it made the offline path
+    # fail after it had already loaded the images.
+    & (Get-Process -Id $PID).Path -NoProfile -File $verify -Distro $Distro -RequireDockerArchive
     if ($LASTEXITCODE -ne 0) {
         throw "Offline cache verification failed"
     }
@@ -78,16 +81,15 @@ $gatewayArgs += @(
 Write-Host "Building gateway image..."
 Invoke-Docker $gatewayArgs
 
-$agentDockerfile = if ($IncludeBlenderMcp) {
-    "$WslRoot/docker/codex-agent/Dockerfile"
-} else {
-    "$WslRoot/docker/codex-agent/Dockerfile.sandbox"
-}
-$agentTag = if ($IncludeBlenderMcp) {
-    "ai-native-codex-agent:all-mcp"
-} else {
-    "ai-native-codex-agent:local"
-}
+# One Codex image, and it bundles the MCP runtimes.
+#
+# Bundling is availability, not configuration: which MCP servers a run gets is
+# decided entirely by its MCP profile, and the renderer never adds one on its
+# own. A second, MCP-less variant only created a way for a task that needs
+# Blender to run without it -- silently, because a missing stdio binary does
+# not fail a run, it just removes tools the Agent was supposed to have.
+$agentDockerfile = "$WslRoot/docker/codex-agent/Dockerfile"
+$agentTag = "ai-native-codex-agent:local"
 $agentArgs = @("build")
 $agentArgs += $pullArgs
 $agentArgs += $buildNetworkArgs
@@ -98,20 +100,18 @@ $agentArgs += @(
     "-t", $agentTag
 )
 
-if ($IncludeBlenderMcp) {
-    if ($UseMirror -and -not $Offline) {
-        $PythonBaseImage = "mirror.gcr.io/library/python:3.12-slim"
-    }
-    $agentArgs += @(
-        "--build-arg", "PYTHON_BASE_IMAGE=$PythonBaseImage",
-        "--build-arg", "PYPI_INDEX_URL=$PyPIIndex"
-    )
-    if ($Offline) {
-        $agentArgs += @("--build-arg", "OFFLINE=1")
-    }
-} elseif ($Offline) {
-    # Dockerfile.sandbox installs Codex from the local npm tarballs only.
-    $agentArgs += @("--build-arg", "NPM_REGISTRY=$NpmRegistry")
+if ($UseMirror -and -not $Offline) {
+    $PythonBaseImage = "mirror.gcr.io/library/python:3.12-slim"
+}
+$agentArgs += @(
+    "--build-arg", "PYTHON_BASE_IMAGE=$PythonBaseImage",
+    "--build-arg", "PYPI_INDEX_URL=$PyPIIndex"
+)
+if ($Offline) {
+    $agentArgs += @("--build-arg", "OFFLINE=1")
+}
+if ($SkipMcp) {
+    Write-Warning "SkipMcp is deprecated: the single Codex image always bundles the MCP runtimes."
 }
 $agentArgs += $WslRoot
 

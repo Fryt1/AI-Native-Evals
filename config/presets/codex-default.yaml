@@ -1,5 +1,7 @@
 id: codex-default
 agent: codex
-model_profile: sub2api-deepseek
+provider: sub2api
+model: gpt-5.6-luna
+reasoning_effort: high
 mcp_profile: none
 sandbox_profile: docker-default

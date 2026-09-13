@@ -6,8 +6,9 @@ ARG NPM_REGISTRY=https://registry.npmmirror.com
 ARG DSH_PREINSTALLED=0
 WORKDIR /opt/dsh
 
-# The build context is the real DSH repository (D:\work\AI-Native\dsh), not
-# AI-Native-Evals. This keeps the Agent image independent from the evaluator.
+# The build context is a DSH source repository, not AI-Native-Evals. This keeps
+# the Agent image independent from the evaluator. The location of that
+# repository is a local deployment detail supplied by the build script.
 COPY . /opt/dsh
 
 RUN if [ "${DSH_PREINSTALLED}" != "1" ]; then \

@@ -1,4 +1,6 @@
 id: dsh-release
+label: DSH（发布版 CLI）
+description: 用发布的 DSH CLI 驱动标准 ACP，适合与 Codex 做同任务对比。
 adapter: dsh-acp
 image: ai-native-dsh-agent:release
 protocol: acp

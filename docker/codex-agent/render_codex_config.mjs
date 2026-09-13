@@ -4,21 +4,13 @@ import path from "node:path";
 const [outputPath, serversPath = ""] = process.argv.slice(2);
 if (!outputPath) throw new Error("output config path is required");
 
+// The MCP profile is the single source of truth for which servers a run gets.
+// This renderer must never add, remove, or default a server on its own; a
+// bundled binary in the image is availability, not configuration.
 let servers = {};
 if (serversPath && fs.existsSync(serversPath)) {
   servers = JSON.parse(fs.readFileSync(serversPath, "utf8"));
 }
-if (process.env.EVAL_ENABLE_BLENDER_MCP === "1" && !servers.blender) {
-  servers.blender = {
-    transport: "stdio",
-    command: "/opt/blender-mcp/bin/blender-mcp",
-    env: {
-      BLENDER_MCP_HOST: process.env.BLENDER_MCP_HOST || "host.docker.internal",
-      BLENDER_MCP_PORT: process.env.BLENDER_MCP_PORT || "9876",
-    },
-  };
-}
-
 const lines = [
   `model_provider = ${tomlString(process.env.EVAL_MODEL_PROVIDER || "eval")}`,
   `model = ${tomlString(process.env.EVAL_MODEL || "")}`,
@@ -66,6 +58,16 @@ function appendServer(lines, name, descriptor) {
     lines.push(`url = ${tomlString(descriptor.url)}`);
     if (descriptor.bearer_token_env_var) {
       lines.push(`bearer_token_env_var = ${tomlString(descriptor.bearer_token_env_var)}`);
+    }
+    // Codex authenticates HTTP MCP servers with bearer_token_env_var or OAuth.
+    // A profile that declares raw `headers` cannot be honoured here, and
+    // dropping them silently would start a server the Agent cannot authorise:
+    // the run would look configured and fail only at first tool call.
+    if (descriptor.headers && Object.keys(descriptor.headers).length) {
+      throw new Error(
+        `MCP HTTP server ${name} declares headers, which this Agent cannot express; ` +
+          "use bearer_token_env_var instead",
+      );
     }
     appendScalar(lines, descriptor, "startup_timeout_sec");
     appendScalar(lines, descriptor, "tool_timeout_sec");
