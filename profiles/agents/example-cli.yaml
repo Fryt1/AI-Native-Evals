@@ -1,0 +1,31 @@
+id: example-cli
+label: 示例 CLI Agent
+description: >-
+  一个单次命令 Agent 的模板：读取 prompt 文件，调用模型，输出结果。
+  复制这个文件与 docker/example-cli/Dockerfile，改掉命令即可接入新的 CLI Agent。
+# The Docker path never consults this; it selects behaviour for the in-process
+# Inspect solver. Set it to the id whose event parsing is closest so the trace
+# is still normalized -- `codex` passes through anything it does not recognise.
+adapter: codex
+image_repository: ai-native-example-cli
+agent_version: 1.0.0
+protocol: responses
+workdir: /workspace
+# The container's root filesystem is read-only, so every path the Agent writes
+# outside /workspace has to be listed here.
+writable_paths:
+  - /tmp/home
+environment:
+  # The framework already exports EVAL_MODEL, EVAL_GATEWAY_URL,
+  # EVAL_GATEWAY_API_KEY, EVAL_TASK_PROMPT_FILE and friends. Only an Agent's own
+  # spelling needs declaring, and it maps to what is already there.
+  HOME: /tmp/home
+  EXAMPLE_MODEL: ${EVAL_MODEL}
+  EXAMPLE_REASONING: ${EVAL_REASONING_EFFORT}
+capabilities:
+  - filesystem
+  - shell
+options:
+  # The real invocation is the image's ENTRYPOINT, so nothing is duplicated
+  # here. A profile needing different flags sets `entrypoint` + `command`.
+  executable: example-cli

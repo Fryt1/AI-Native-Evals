@@ -109,6 +109,9 @@ def run_evaluator_agent(
     legacy_profile = not bool(profile)
     adapter = str(profile.get("adapter") or run.get("agent", "codex"))
     profile_id = str(profile.get("id") or run.get("agent", adapter))
+    # The log parser is its own fact, resolved by the profile. It used to be the
+    # adapter value, which made an Agent's identity decide how its log is read.
+    trace_parser = str(profile.get("trace_parser") or adapter)
     workdir = str(
         profile.get("workdir")
         or ("/workspace/game-engine" if legacy_profile else "/workspace")
@@ -354,7 +357,9 @@ def run_evaluator_agent(
             raise DockerRuntimeError(_command_error(logs_result))
         log_text = _combined_output(logs_result)
         log_path.write_text(log_text, encoding="utf-8")
-        normalize_log_file(log_path, normalized_events_path, adapter=adapter, agent_id=profile_id)
+        normalize_log_file(
+            log_path, normalized_events_path, adapter=trace_parser, agent_id=profile_id
+        )
         status = "completed" if exit_code == 0 else "failed"
         if status == "failed":
             failure_message = _tail(log_text) or f"evaluator exited with {exit_code}"

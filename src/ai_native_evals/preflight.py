@@ -344,14 +344,15 @@ def check_agent_images(repo_root: Path, *, distro: str | None = None) -> Check:
             hint="add one under profiles/agents/",
         )
 
-    pairs = [(name, str(profile.get("image") or "")) for name, profile in agents.items()]
-    usable = [(name, image) for name, image in pairs if image]
+    # Profiles are already resolved objects; nothing here re-reads or
+    # re-interprets their fields.
+    usable = [(name, profile.image) for name, profile in agents.items() if profile.image]
     if not usable:
         return Check(
             "agent_images",
             MISSING,
-            detail="no Agent profile declares an image",
-            hint="add an `image:` field to the profile",
+            detail="no Agent profile resolves to an image",
+            hint="add `image:` or `image_repository:` + `agent_version:` to the profile",
         )
 
     statuses = require_images(usable, distro=distro)
@@ -388,24 +389,19 @@ def check_agent_images(repo_root: Path, *, distro: str | None = None) -> Check:
 
 
 def _agent_profiles(repo_root: Path, config: dict[str, Any]) -> dict[str, Any]:
-    """Read profiles/agents/*.yaml without going through run resolution."""
-    import yaml
+    """Load the repository's Agent profiles through the shared loader.
+
+    This used to parse the YAML itself. Two modules doing that meant a field
+    whose meaning changed -- an `image` derived from a version -- was fixed in
+    one and silently broken in the other.
+    """
+    from .agents.profile import load_agent_profiles
 
     root = repo_root / "profiles" / "agents"
     profile_roots = config.get("profile_roots")
     if isinstance(profile_roots, dict) and profile_roots.get("agents"):
         root = repo_root / str(profile_roots["agents"])
-    if not root.is_dir():
-        return {}
-    profiles: dict[str, Any] = {}
-    for path in sorted(root.glob("*.yaml")):
-        try:
-            value = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        except (OSError, yaml.YAMLError):
-            continue
-        if isinstance(value, dict):
-            profiles[str(value.get("id") or path.stem)] = value
-    return profiles
+    return load_agent_profiles(root)
 
 
 def check_provider_credentials(repo_root: Path) -> Check:

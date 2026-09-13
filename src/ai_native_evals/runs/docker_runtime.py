@@ -192,11 +192,19 @@ def wait_docker_run(
         from ..adapters.events import normalize_log_file
 
         profile = manifest.get("run", {}).get("agent_profile", {})
-        adapter = profile.get("adapter") if isinstance(profile, dict) else None
+        # `trace_parser` rather than the bare adapter: the two used to be the
+        # same value, which made an Agent's identity decide how its log was
+        # read. The profile resolves the parser, so a new Agent can name a
+        # suitable one without inventing an adapter.
+        parser = ""
+        if isinstance(profile, dict):
+            parser = str(profile.get("trace_parser") or "")
+        if not parser:
+            parser = str(profile.get("adapter") or "") if isinstance(profile, dict) else ""
         normalize_log_file(
             log_path,
             trace_dir / "normalized-events.jsonl",
-            adapter=str(adapter or manifest.get("run", {}).get("agent", "codex")),
+            adapter=parser or str(manifest.get("run", {}).get("agent", "codex")),
             agent_id=str(manifest.get("run", {}).get("agent", "agent")),
         )
     except Exception:

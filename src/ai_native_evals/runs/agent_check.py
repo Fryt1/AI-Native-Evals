@@ -28,9 +28,16 @@ import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .images import inspect_image, wsl_distro
+
+if TYPE_CHECKING:
+    from ai_native_evals.agents.profile import AgentProfile
+
+#: Where a run mounts the Task prompt. The probe uses the same path so it
+#: exercises the contract a real run uses rather than one of its own.
+_PROMPT_FILE = "/run-config/task-prompt.md"
 
 #: A smoke run starts a real container; it must not hang forever.
 DEFAULT_SMOKE_TIMEOUT_SECONDS = 240
@@ -137,38 +144,28 @@ class AgentReport:
         }
 
 
-def load_agent_profile(repo_root: Path, agent: str) -> dict[str, Any]:
-    """Read one Agent profile, matching on filename or declared id."""
-    import yaml
+def load_agent_profile(repo_root: Path, agent: str) -> AgentProfile | None:
+    """Load one Agent profile through the shared loader.
+
+    Matching on declared id as well as filename is kept, because a profile may
+    be named differently from its file.
+    """
+    from ai_native_evals.agents.profile import (
+        AgentProfileError,
+        load_agent_profile_file,
+        load_agent_profiles,
+    )
 
     root = repo_root / "profiles" / "agents"
     direct = root / f"{agent}.yaml"
-    candidates = [direct] if direct.is_file() else sorted(root.glob("*.yaml"))
-    for path in candidates:
+    if direct.is_file():
         try:
-            value = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        except (OSError, yaml.YAMLError):
-            continue
-        if isinstance(value, dict) and str(value.get("id") or path.stem) == agent:
-            return value
-    return {}
-
-
-def _resolve_profile(repo_root: Path, agent: str, profile: dict[str, Any]) -> Any:
-    """Materialize a profile the way a run would, or ``None`` if it is invalid.
-
-    Going through the real resolver is what keeps this check honest: a profile
-    that derives its image tag from a version resolves here exactly as it would
-    at run time, and a malformed one is reported rather than guessed at.
-    """
-    if not profile:
-        return None
-    from ai_native_evals.agents.profile import AgentProfile, AgentProfileError
-
-    try:
-        return AgentProfile.from_mapping(str(profile.get("id") or agent), profile)
-    except AgentProfileError:
-        return None
+            profile = load_agent_profile_file(direct)
+        except (AgentProfileError, OSError, ValueError):
+            return None
+        if profile.profile_id == agent:
+            return profile
+    return load_agent_profiles(root).get(agent)
 
 
 # --- static verification -----------------------------------------------------
@@ -176,16 +173,14 @@ def _resolve_profile(repo_root: Path, agent: str, profile: dict[str, Any]) -> An
 
 def check_static(repo_root: Path, agent: str, *, distro: str | None = None) -> AgentReport:
     """Verify an Agent without starting anything."""
+    # One shared loader, so this check and a run can never disagree about what a
+    # profile means. Two modules reading the YAML themselves is how a derived
+    # `image` came to be handled in one and missed in the other.
     profile = load_agent_profile(repo_root, agent)
-    # Resolved through the same code a run uses, so the check cannot disagree
-    # with what the run would actually start. Reading the raw `image` key here
-    # reported a regression the moment profiles began deriving the tag from a
-    # version instead of spelling it out.
-    resolved = _resolve_profile(repo_root, agent, profile)
-    image = resolved.image if resolved else str(profile.get("image") or "")
+    image = profile.image if profile else ""
     report = AgentReport(agent=agent, image=image, level="static")
 
-    if not profile:
+    if profile is None:
         report.add(
             AgentCheck(
                 "profile",
@@ -198,10 +193,8 @@ def check_static(repo_root: Path, agent: str, *, distro: str | None = None) -> A
     report.add(AgentCheck("profile", "ok", detail=f"profiles/agents/{agent}.yaml"))
 
     # A run cannot start without these; the profile is the only place they exist.
-    for key in ("adapter", "image"):
-        value = resolved.image if (key == "image" and resolved) else str(profile.get(key) or "")
-        value = value.strip()
-        if value:
+    for key, value in (("adapter", profile.adapter), ("image", profile.image)):
+        if value.strip():
             report.add(AgentCheck(key, "ok", detail=value))
         else:
             report.add(
@@ -212,8 +205,8 @@ def check_static(repo_root: Path, agent: str, *, distro: str | None = None) -> A
                     hint=f"在 profile 中加入 `{key}:`",
                 )
             )
-    if resolved is not None and resolved.agent_version:
-        report.add(AgentCheck("version", "ok", detail=resolved.agent_version))
+    if profile.agent_version:
+        report.add(AgentCheck("version", "ok", detail=profile.agent_version))
     if not image:
         return report
 
@@ -234,8 +227,7 @@ def check_static(repo_root: Path, agent: str, *, distro: str | None = None) -> A
     else:
         report.add(AgentCheck("image", "ok", detail=f"{image} ({status.image_id})"))
 
-    capabilities = profile.get("capabilities")
-    declared = [str(item) for item in capabilities] if isinstance(capabilities, list) else []
+    declared = [str(item) for item in profile.capabilities]
     report.add(
         AgentCheck(
             "capabilities",
@@ -293,6 +285,11 @@ def smoke_test_agent(
         return report
 
     profile = load_agent_profile(repo_root, agent)
+    if profile is None:
+        # `check_static` already reported the missing profile as unusable, so
+        # reaching here means the report is contradictory; returning it is still
+        # better than raising out of a health check.
+        return report
     target = wsl_distro(distro)
     upstream = read_upstream_env(provider_env_file)
     if upstream is None:
@@ -311,6 +308,12 @@ def smoke_test_agent(
     key = "agent-check-key"
     with tempfile.TemporaryDirectory(prefix="agent-check-") as workspace_raw:
         workspace = Path(workspace_raw)
+        # The probe prompt is written to a file and mounted, mirroring a real
+        # run. Passing it in argv would test a contract no run uses.
+        run_config = workspace / "run-config"
+        run_config.mkdir(parents=True, exist_ok=True)
+        (run_config / "task-prompt.md").write_text(PROBE_PROMPT + "\n", encoding="utf-8")
+        (run_config / "mcp-servers.json").write_text("{}", encoding="utf-8")
         try:
             created, out = _run(
                 ["wsl.exe", "-d", target, "--", "docker", "network", "create", network], 60
@@ -329,7 +332,9 @@ def smoke_test_agent(
                 return report
 
             launched, out = _run(
-                _agent_args(target, profile, report.image, container, network, key, model),
+                _agent_args(
+                    target, profile, report.image, container, network, key, model, run_config
+                ),
                 180,
             )
             if launched != 0:
@@ -372,9 +377,8 @@ def smoke_test_agent(
                 )
                 return report
 
-            adapter = str(profile.get("adapter") or "codex")
             reply = extract_reply(logs) or read_last_message(workspace)
-            if not reply and adapter != "codex":
+            if not reply and profile.trace_parser != "codex":
                 # A non-conversational probe reports through stdout, not the
                 # Codex event stream.
                 reply = _first_meaningful_line(logs)
@@ -387,7 +391,7 @@ def smoke_test_agent(
                         hint=diagnose(logs),
                     )
                 )
-            elif PROBE_EXPECTED.lower() in reply.lower() or adapter != "codex":
+            elif PROBE_EXPECTED.lower() in reply.lower() or profile.trace_parser != "codex":
                 report.add(AgentCheck("reply", "ok", detail=f"Agent 回答：{reply[:80]}"))
             else:
                 # A different answer still proves the round trip; only the exact
@@ -429,19 +433,26 @@ def _agent_args(
     network: str,
     key: str,
     model: str,
+    prompt_dir: Path,
 ) -> list[str]:
     """A minimal version of a real run's container contract.
 
-    The entrypoint is already inside the image, so nothing needs mounting: the
+    The entrypoint is already inside the image, so nothing needs building: the
     probe exercises the same startup path a real run takes, which is the point.
+
+    The prompt is mounted as a **file**, and the profile's own `command` is
+    replayed rather than invented. An earlier version passed the prompt in argv
+    while every real run mounted it, so any Agent reading
+    `EVAL_TASK_PROMPT_FILE` was reported broken by the probe while working
+    perfectly -- the probe measuring a contract nothing else used. Replaying the
+    profile's command means the probe cannot diverge from the run again.
 
     ``CODEX_HOME`` must stay at the image's own path. Codex refuses to run with
     its home under a temporary directory ("Refusing to create helper binaries
     under temporary dir"), and it exits before doing anything -- a trap found by
     running this probe rather than reasoning about it.
     """
-    adapter = str(profile.get("adapter") or "codex")
-    declared_workdir = str(profile.get("workdir") or "/workspace")
+    declared_workdir = profile.workdir or "/workspace"
     args = [
         "wsl.exe", "-d", distro, "--", "docker", "run", "--detach",
         "--name", container, "--network", network,
@@ -451,6 +462,9 @@ def _agent_args(
         # would fail resolving its --cd -- a probe artifact, not a profile
         # defect. An anonymous tmpfs gives it somewhere to live.
         "--tmpfs", f"{declared_workdir}:rw,size=64m",
+        # Same mount point and variable a real run uses.
+        "--mount", f"type=bind,src={_wsl_path(prompt_dir)},dst=/run-config,readonly",
+        "-e", f"EVAL_TASK_PROMPT_FILE={_PROMPT_FILE}",
         "-e", f"EVAL_GATEWAY_API_KEY={key}",
         "-e", "EVAL_GATEWAY_URL=http://llm-gateway:8080/v1",
         "-e", f"EVAL_MODEL={model}",
@@ -463,18 +477,57 @@ def _agent_args(
         "-e", "EVAL_OUTER_SANDBOX=docker",
         "-e", "HOME=/tmp/home",
     ]
-    if adapter == "dsh-acp":
+    for name, value in profile.environment.items():
+        args += ["-e", f"{name}={_render_probe_value(str(value), model)}"]
+    if profile.adapter == "dsh-acp":
         # DSH is an ACP server: it has no one-shot prompt entrypoint, so a
         # conversational probe would need a full ACP handshake. What can be
         # verified is that the declared executable actually starts, which is
         # exactly the failure this profile type has hit before.
-        executable = str(
-            (profile.get("environment") or {}).get("DSH_EXECUTABLE") or "dsh"
-        )
+        executable = str(profile.environment.get("DSH_EXECUTABLE") or "dsh")
         args += ["--entrypoint", "sh", image, "-c", f"{executable} --version"]
+    elif profile.command:
+        # The profile's own command is replayed, so the probe exercises the same
+        # contract the run will. `prompt_delivery` is what the profile declares,
+        # not a decision this probe makes.
+        if profile.entrypoint:
+            args += ["--entrypoint", profile.entrypoint]
+        args += [image]
+        args += [_render_probe_value(str(item), model) for item in profile.command]
     else:
-        args += [image, PROBE_PROMPT]
+        # The image's own entrypoint reads the prompt file.
+        args += [image]
     return args
+
+
+def _render_probe_value(value: str, model: str) -> str:
+    """Resolve the run placeholders a probe can supply."""
+    return (
+        value.replace("${TASK_PROMPT}", _PROMPT_FILE)
+        .replace("${MODEL}", model)
+        .replace("${EVAL_MODEL}", model)
+        .replace("${REASONING_EFFORT}", "high")
+        .replace("${EVAL_REASONING_EFFORT}", "high")
+        .replace("${WORKDIR}", "/tmp")
+        .replace("${EVAL_WORKDIR}", "/tmp")
+        .replace("${MCP_CONFIG}", "/run-config/mcp-servers.json")
+        .replace("${EVAL_MCP_SERVERS_FILE}", "/run-config/mcp-servers.json")
+    )
+
+
+def _wsl_path(path: Path) -> str:
+    """Convert an absolute Windows path to one WSL Docker can bind-mount.
+
+    Docker runs inside WSL, so it cannot see `D:\\...`. The same conversion the
+    runtime applies, kept here rather than imported: this module deliberately
+    depends only on `images`, so a probe can run without the runtime loaded.
+    """
+    resolved = path.resolve()
+    drive = resolved.drive
+    if drive:
+        relative = resolved.relative_to(resolved.anchor).as_posix()
+        return f"/mnt/{drive[0].lower()}/{relative}"
+    return resolved.as_posix()
 
 
 def _parse_container_exit(wait_code: int, wait_out: str) -> int | None:

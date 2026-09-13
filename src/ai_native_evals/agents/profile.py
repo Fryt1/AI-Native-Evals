@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 
@@ -106,6 +107,38 @@ class AgentProfile:
             agent_version=agent_version,
         )
 
+    @property
+    def trace_parser(self) -> str:
+        """Which trace parser reads this profile's log.
+
+        This used to be the bare `adapter` value, which conflated two unrelated
+        jobs: selecting the in-process implementation and selecting a log
+        parser. They are separate now, and the parser falls back to a
+        pass-through so an unknown Agent still produces usable events rather
+        than an empty Process phase.
+        """
+        declared = self.options.get("trace_parser")
+        if isinstance(declared, str) and declared.strip():
+            return declared.strip()
+        return self.adapter or "generic"
+
+    @property
+    def prompt_delivery(self) -> str:
+        """How the Task prompt reaches the Agent.
+
+        Derived from what the profile declares, so a verification probe cannot
+        disagree with a real run: both ask this property rather than each
+        deciding for itself. An earlier probe passed the prompt in argv while
+        every real run mounted it as a file, so any Agent reading the file was
+        reported broken by the probe while working perfectly.
+        """
+        for item in self.command:
+            if "${TASK_PROMPT}" in item or "TASK_PROMPT" in item:
+                return "argv"
+        if any("<" in item and "TASK_PROMPT" in item for item in self.command):
+            return "stdin"
+        return "file"
+
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-safe immutable profile snapshot."""
         return {
@@ -122,7 +155,44 @@ class AgentProfile:
             "capabilities": list(self.capabilities),
             "options": dict(self.options),
             "agent_version": self.agent_version,
+            # Reported so a reader does not have to re-derive either, which is
+            # how the two consumers of this profile drifted apart before.
+            "trace_parser": self.trace_parser,
+            "prompt_delivery": self.prompt_delivery,
         }
+
+
+def load_agent_profile_file(path: Path) -> AgentProfile:
+    """Load one Agent profile from a YAML file.
+
+    The single place a profile file becomes an AgentProfile. `preflight` and the
+    Agent check each used to read the YAML themselves and interpret the fields,
+    so a change to how `image` resolves fixed one and silently missed the other.
+    """
+    import yaml
+
+    value = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    if not isinstance(value, Mapping):
+        raise AgentProfileError(f"agent profile {path.name} is not a mapping")
+    return AgentProfile.from_mapping(str(value.get("id") or path.stem), value)
+
+
+def load_agent_profiles(root: Path) -> dict[str, AgentProfile]:
+    """Load every profile under a directory, keyed by declared id.
+
+    A malformed profile is skipped rather than raising: a directory holding one
+    broken file should still let `doctor` report the others.
+    """
+    profiles: dict[str, AgentProfile] = {}
+    if not root.is_dir():
+        return profiles
+    for path in sorted(root.glob("*.yaml")):
+        try:
+            profile = load_agent_profile_file(path)
+        except (AgentProfileError, OSError, ValueError):
+            continue
+        profiles[profile.profile_id] = profile
+    return profiles
 
 
 def _string(value: Mapping[str, Any], key: str, default: str) -> str:

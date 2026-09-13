@@ -16,6 +16,7 @@ useful reason instead of a blank failure.
 
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 
 import pytest
@@ -169,17 +170,44 @@ def test_static_check_reports_declared_capabilities() -> None:
 
 
 def test_load_agent_profile_matches_on_declared_id(tmp_path: Path) -> None:
+    """A profile may be named differently from its file."""
     root = tmp_path / "profiles" / "agents"
     root.mkdir(parents=True)
     (root / "renamed.yaml").write_text(
         "id: actual-id\nadapter: codex\nimage: x\n", encoding="utf-8"
     )
 
-    assert load_agent_profile(tmp_path, "actual-id")["adapter"] == "codex"
+    profile = load_agent_profile(tmp_path, "actual-id")
+
+    assert profile is not None
+    assert profile.adapter == "codex"
 
 
-def test_load_agent_profile_returns_empty_for_an_unknown_agent(tmp_path: Path) -> None:
-    assert load_agent_profile(tmp_path, "nope") == {}
+def test_load_agent_profile_returns_none_for_an_unknown_agent(tmp_path: Path) -> None:
+    """`None` rather than an empty mapping: there is no profile, not an empty one."""
+    assert load_agent_profile(tmp_path, "nope") is None
+
+
+def test_the_loader_is_the_shared_one(tmp_path: Path) -> None:
+    """Both the check and the preflight must read a profile the same way.
+
+    They each parsed the YAML themselves before, so a field whose meaning
+    changed was fixed in one and silently broken in the other.
+    """
+    from ai_native_evals.agents.profile import load_agent_profiles
+
+    root = tmp_path / "profiles" / "agents"
+    root.mkdir(parents=True)
+    (root / "p.yaml").write_text(
+        "id: p\nadapter: codex\nimage_repository: img\nagent_version: 2.0.0\n",
+        encoding="utf-8",
+    )
+
+    from_check = load_agent_profile(tmp_path, "p")
+    from_shared = load_agent_profiles(root)["p"]
+
+    assert from_check is not None
+    assert from_check.image == from_shared.image == "img:2.0.0"
 
 
 def test_static_check_flags_a_profile_without_an_image(tmp_path: Path) -> None:
@@ -190,7 +218,7 @@ def test_static_check_flags_a_profile_without_an_image(tmp_path: Path) -> None:
     report = check_static(tmp_path, "noimg")
 
     assert report.usable is False
-    assert "image" in report.to_dict()["failed"]
+    assert "profile" in report.to_dict()["failed"] or "image" in report.to_dict()["failed"]
 
 
 # --- reply parsing -----------------------------------------------------------
@@ -333,8 +361,23 @@ def test_container_exit_takes_the_last_printed_line() -> None:
 # --- smoke container shape ---------------------------------------------------
 
 
-def _args_for(profile: dict) -> list[str]:
-    return _agent_args("Ubuntu-20.04", profile, "img:tag", "c", "net", "k", "m")
+def _args_for(profile: dict | None = None, **overrides: object) -> list[str]:
+    """Build the probe's argv from a profile mapping, as a run would."""
+    from ai_native_evals.agents.profile import AgentProfile
+
+    mapping: dict = {"adapter": "codex", "image": "img:tag", **(profile or {})}
+    mapping.update(overrides)
+    resolved = AgentProfile.from_mapping("probe", mapping)
+    return _agent_args(
+        "Ubuntu-20.04",
+        resolved,
+        "img:tag",
+        "c",
+        "net",
+        "k",
+        "m",
+        Path("C:/tmp/run-config"),
+    )
 
 
 def test_smoke_gives_the_declared_workdir_somewhere_to_live() -> None:
@@ -351,29 +394,79 @@ def test_smoke_gives_the_declared_workdir_somewhere_to_live() -> None:
 
 def test_smoke_runs_the_agent_in_a_directory_that_always_exists() -> None:
     """EVAL_WORKDIR is Codex's --cd, so it must exist before the entrypoint runs."""
-    assert "EVAL_WORKDIR=/tmp" in _args_for({"adapter": "codex"})
+    assert "EVAL_WORKDIR=/tmp" in _args_for()
 
 
 def test_smoke_never_overrides_codex_home() -> None:
     """Codex refuses to run with its home under a temporary directory."""
-    joined = " ".join(_args_for({"adapter": "codex"}))
+    joined = " ".join(_args_for())
 
     assert "CODEX_HOME" not in joined
 
 
-def test_smoke_probes_the_declared_executable_for_dsh() -> None:
-    """DSH is an ACP server; what can be verified is that its binary starts."""
-    profile = {"adapter": "dsh-acp", "environment": {"DSH_EXECUTABLE": "dsh"}}
-    joined = " ".join(_args_for(profile))
+def test_smoke_mounts_the_prompt_the_way_a_run_does() -> None:
+    """The probe must not invent its own prompt contract.
+
+    It used to pass the text in argv while every real run mounted it as a file,
+    so an Agent reading the file was reported broken while working perfectly.
+    """
+    joined = " ".join(_args_for())
+
+    assert "dst=/run-config" in joined
+    assert "EVAL_TASK_PROMPT_FILE=/run-config/task-prompt.md" in joined
+
+
+def test_smoke_replays_the_profiles_own_command() -> None:
+    """A profile with a command gets that command, not a substitute."""
+    joined = " ".join(
+        _args_for(
+            {
+                "adapter": "codex",
+                "entrypoint": "sh",
+                "command": ["-c", "my-agent --file ${TASK_PROMPT}"],
+            }
+        )
+    )
+
+    assert "my-agent --file /run-config/task-prompt.md" in joined
+    assert "--entrypoint sh" in joined.replace("  ", " ")
+
+
+def test_smoke_passes_the_profiles_environment() -> None:
+    """An Agent's own variable names must reach it, resolved."""
+    joined = " ".join(_args_for({"adapter": "codex", "environment": {"MY_MODEL": "${MODEL}"}}))
+
+    assert "MY_MODEL=m" in joined
+
+
+def test_smoke_asks_the_agent_through_the_mounted_prompt() -> None:
+    """The question reaches the Agent as a file, the same way a run's prompt does.
+
+    It used to be an argv element, which meant the probe exercised a contract no
+    real run used.
+    """
+    joined = " ".join(_args_for())
+
+    assert "EVAL_TASK_PROMPT_FILE=/run-config/task-prompt.md" in joined
+    assert "dst=/run-config" in joined
+    assert PROBE_PROMPT not in joined, "the prompt text must not travel in argv"
+
+
+def test_the_probe_prompt_file_is_written_for_the_container() -> None:
+    """The probe writes the question where it just told the Agent to look."""
+    from ai_native_evals.runs.agent_check import PROBE_PROMPT as prompt
+
+    source = inspect.getsource(agent_check.smoke_test_agent)
+
+    assert "task-prompt.md" in source
+    assert prompt
+
+
+def test_dsh_is_probed_by_starting_its_binary() -> None:
+    """DSH is an ACP server; there is no one-shot prompt to send it."""
+    joined = " ".join(_args_for({"adapter": "dsh-acp", "environment": {"DSH_EXECUTABLE": "dsh"}}))
 
     assert "dsh --version" in joined
-    assert PROBE_PROMPT not in joined
-
-
-def test_smoke_asks_codex_the_probe_question() -> None:
-    joined = " ".join(_args_for({"adapter": "codex"}))
-
-    assert PROBE_PROMPT in joined
 
 
 def test_a_missing_workdir_gives_an_actionable_hint() -> None:
