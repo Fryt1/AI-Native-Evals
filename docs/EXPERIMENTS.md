@@ -90,15 +90,28 @@ Agent. The count is always shown, so a shrunken sample is visible.
 
 ### The verdict
 
-The report states whether the cells are actually distinguishable:
+The report states whether the cells are actually distinguishable, using
+**Fisher's exact test** on each pair of pass counts, with a Bonferroni correction
+across the pairs being compared. The p-value is printed, so the conclusion can be
+checked rather than trusted.
 
-- **可区分** — every pair of intervals is disjoint.
-- **无法区分** — some pair overlaps, so this sample cannot separate them,
-  whatever the pass rates look like.
+- **可区分** — every pair passes the corrected threshold.
+- **无法区分** — at least one pair does not, with its p-value shown.
 
-`experiment run` and `compare --runs N` exit **2** in the second case. Ran fine,
-proves nothing: a distinction that matters for CI, so a pipeline does not treat
-an inconclusive experiment as a green light.
+> **Intervals are not the test.** An earlier version called two cells
+> indistinguishable whenever their 95% intervals overlapped. That is a fallacy in
+> the direction that matters: disjoint intervals do prove a difference, but
+> overlapping ones prove nothing. Measured on `reasoning-effort-sweep`,
+> 13/20 vs 19/20 has overlapping intervals *and* a Fisher p of 0.044 — a real
+> effect that the overlap rule reported as "cannot tell".
+
+The Bonferroni correction exists because a matrix asks many questions at once:
+four cells is six pairs, and testing each at 0.05 would give roughly a one-in-four
+chance of at least one false positive.
+
+`experiment run` and `compare --runs N` exit **2** when any pair is
+indistinguishable. Ran fine, proves nothing: a distinction that matters for CI,
+so a pipeline does not treat an inconclusive experiment as a green light.
 
 ## Where results live
 

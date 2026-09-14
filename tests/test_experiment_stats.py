@@ -11,6 +11,8 @@ import pytest
 
 from ai_native_evals.experiments.stats import (
     discrimination,
+    fisher_exact_two_sided,
+    intervals_overlap,
     score_summary,
     summarize_attempts,
     wilson_interval,
@@ -123,8 +125,8 @@ def test_scores_are_aggregated_per_cell() -> None:
     assert summary["quality"]["n"] == 2
 
 
-def test_overlapping_intervals_are_not_a_difference() -> None:
-    """4/5 versus 3/5 is not evidence, and the verdict must say so."""
+def test_small_difference_is_not_evidence() -> None:
+    """4/5 versus 3/5 is not a difference, and the verdict must say so."""
     cells = [
         summarize_attempts("codex", [_attempt("pass")] * 4 + [_attempt("fail")]),
         summarize_attempts("dsh", [_attempt("pass")] * 3 + [_attempt("fail")] * 2),
@@ -134,7 +136,40 @@ def test_overlapping_intervals_are_not_a_difference() -> None:
 
     assert verdict["separated"] is False
     assert verdict["overlapping"]
-    assert "不足以区分" in verdict["reason"]
+
+
+def test_a_real_difference_is_found_even_when_intervals_overlap() -> None:
+    """The bug this replaced.
+
+    13/20 versus 19/20 has overlapping 95% intervals, and the first version of
+    this function called that "cannot tell". Fisher's exact test gives p=0.044:
+    the difference is real. Interval overlap is only a conservative screen --
+    disjoint intervals prove a difference, but overlapping ones prove nothing,
+    and reading them as sameness hides genuine effects.
+    """
+    low = summarize_attempts("low", [_attempt("pass")] * 13 + [_attempt("fail")] * 7)
+    high = summarize_attempts("high", [_attempt("pass")] * 19 + [_attempt("fail")])
+
+    verdict = discrimination([low, high])
+
+    assert intervals_overlap(low["pass_rate_ci95"], high["pass_rate_ci95"]), (
+        "this case only means anything while the intervals do overlap"
+    )
+    assert verdict["separated"] is True
+    assert verdict["comparisons"][0]["p_value"] < 0.05
+
+
+def test_indistinguishable_cells_are_still_reported_as_such() -> None:
+    """The correction must not turn every comparison into a finding."""
+    cells = [
+        summarize_attempts("codex", [_attempt("pass")] * 18 + [_attempt("fail")] * 2),
+        summarize_attempts("dsh", [_attempt("pass")] * 20),
+    ]
+
+    verdict = discrimination(cells)
+
+    assert verdict["separated"] is False
+    assert verdict["comparisons"][0]["p_value"] > 0.05
 
 
 def test_disjoint_intervals_are_separated() -> None:
@@ -147,6 +182,53 @@ def test_disjoint_intervals_are_separated() -> None:
 
     assert verdict["separated"] is True
     assert verdict["overlapping"] == []
+
+
+def test_more_comparisons_need_more_evidence() -> None:
+    """Four cells ask six questions, so the bar per question has to rise.
+
+    Without the correction, a matrix of many cells would manufacture a finding
+    from noise: testing six pairs at 0.05 each gives roughly a one-in-four chance
+    of at least one false positive.
+    """
+    two = discrimination(
+        [
+            summarize_attempts("a", [_attempt("pass")] * 13 + [_attempt("fail")] * 7),
+            summarize_attempts("b", [_attempt("pass")] * 19 + [_attempt("fail")]),
+        ]
+    )
+    four = discrimination(
+        [
+            summarize_attempts("a", [_attempt("pass")] * 13 + [_attempt("fail")] * 7),
+            summarize_attempts("b", [_attempt("pass")] * 19 + [_attempt("fail")]),
+            summarize_attempts("c", [_attempt("pass")] * 15 + [_attempt("fail")] * 5),
+            summarize_attempts("d", [_attempt("pass")] * 16 + [_attempt("fail")] * 4),
+        ]
+    )
+
+    assert four["bonferroni_threshold"] < two["bonferroni_threshold"]
+    assert len(four["comparisons"]) == 6
+    assert len(two["comparisons"]) == 1
+
+
+def test_fisher_matches_an_independently_computed_value() -> None:
+    """13/20 against 19/20, computed by brute-force enumeration: p=0.0436."""
+    assert fisher_exact_two_sided(13, 20, 19, 20) == pytest.approx(0.0436, abs=0.0005)
+
+
+@pytest.mark.parametrize(
+    ("passed_a", "total_a", "passed_b", "total_b"),
+    [(0, 10, 10, 10), (10, 10, 10, 10), (5, 10, 5, 10), (9, 10, 10, 10)],
+)
+def test_fisher_stays_in_range(
+    passed_a: int, total_a: int, passed_b: int, total_b: int
+) -> None:
+    p_value = fisher_exact_two_sided(passed_a, total_a, passed_b, total_b)
+    assert 0.0 <= p_value <= 1.0
+
+
+def test_identical_counts_are_never_a_difference() -> None:
+    assert fisher_exact_two_sided(7, 10, 7, 10) == pytest.approx(1.0)
 
 
 def test_one_cell_cannot_be_compared() -> None:

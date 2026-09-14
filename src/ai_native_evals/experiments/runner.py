@@ -388,6 +388,26 @@ def render_experiment_markdown(payload: dict[str, Any]) -> str:
         lines.extend([f"> **无法区分。** {verdict.get('reason', '')}", ""])
     elif verdict.get("separated") is True:
         lines.extend([f"> **可区分。** {verdict.get('reason', '')}", ""])
+    comparisons = verdict.get("comparisons") or []
+    if comparisons:
+        # The p-value is the evidence for the verdict above. Printing only the
+        # conclusion would leave a reader unable to check it.
+        lines.extend(
+            [
+                "| Pair | Fisher p | Significant |",
+                "|---|---:|---|",
+            ]
+        )
+        for entry in comparisons:
+            lines.append(
+                "| {left} vs {right} | {p} | {sig} |".format(
+                    left=entry.get("left", ""),
+                    right=entry.get("right", ""),
+                    p=entry.get("p_value", ""),
+                    sig="yes" if entry.get("significant") else "no",
+                )
+            )
+        lines.append("")
 
     lines.extend(
         [
