@@ -430,8 +430,17 @@ def resolve_run(
         agent_image=agent_profile.image,
         model_profile=profile_name,
         model=resolved_model,
-        model_provider=resolved_provider
-        or ("eval" if agent_profile.adapter == "dsh-acp" else None),
+        # Only what the model binding or the operator actually selected. This
+        # used to fall back to `"eval"` for the DSH adapter, because the Codex
+        # config renderer needs a route name -- but that renderer already
+        # defaults to `eval` itself, and no DSH entry point reads the value at
+        # all. The fallback therefore changed nothing about how either Agent ran
+        # while making `model_provider` an Agent-specific value, and since this
+        # field is part of the Console's fairness fingerprint, every Codex-vs-DSH
+        # comparison was declared "inputs differ, compare with caution" even when
+        # every real input was identical. Agent identity must not leak into a
+        # field whose whole job is to describe the *model* side of the run.
+        model_provider=resolved_provider,
         protocol=protocol,
         reasoning_effort=resolved_reasoning,
         mcp_profile=mcp_name,
