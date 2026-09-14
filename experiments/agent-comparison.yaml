@@ -1,0 +1,18 @@
+# Which Agent completes this Task, and how reliably.
+#
+# The single-axis case, kept as a definition so the conditions are reviewable in
+# git rather than living in a shell history. `compare --agents codex,dsh-release`
+# runs exactly this design.
+id: agent-comparison
+description: 同一 Task 上比较两个 Agent，每个跑 5 次以观察波动
+task_id: codex-file-smoke
+vary:
+  agent:
+    - codex
+    - dsh-release
+fixed:
+  model: gpt-5.6-luna
+  reasoning_effort: high
+  mcp_profile: none
+  sandbox_profile: docker-default
+repeats: 5

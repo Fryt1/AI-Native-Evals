@@ -162,3 +162,78 @@ def test_unknown_profile_kind_is_refused(repo: Path) -> None:
 
     with pytest.raises(EvalConfigError, match="unsupported profile catalog"):
         cli._profile_catalog(repo, "nonsense")
+
+
+@pytest.fixture()
+def experiment_dir(tmp_path: Path) -> Path:
+    root = tmp_path / "experiments"
+    root.mkdir()
+    (root / "sweep.yaml").write_text(
+        "id: sweep\n"
+        "task_id: demo\n"
+        "vary:\n"
+        "  agent: [codex, dsh]\n"
+        "  reasoning_effort: [low, high]\n"
+        "fixed:\n"
+        "  model: m\n"
+        "repeats: 3\n",
+        encoding="utf-8",
+    )
+    return root
+
+
+def test_experiment_list_reads_the_directory(
+    experiment_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code, out = _run(capsys, "experiment", "list", "--dir", str(experiment_dir))
+
+    assert code == 0
+    payload = json.loads(out)
+    assert list(payload["experiments"]) == ["sweep"]
+    # 2 agents x 2 efforts x 3 repeats.
+    assert payload["experiments"]["sweep"]["attempt_count"] == 12
+
+
+def test_experiment_show_prints_the_cells(
+    experiment_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The review surface: what varies, what is frozen, and the cells produced."""
+    code, out = _run(capsys, "experiment", "show", "sweep", "--dir", str(experiment_dir))
+
+    assert code == 0
+    assert "4 cell(s) x 3 = 12 run(s)" in out
+    assert "agent=codex · reasoning_effort=low" in out
+    assert "fixed      : model=m" in out
+
+
+def test_experiment_show_as_json_is_machine_readable(
+    experiment_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code, out = _run(capsys, "experiment", "show", "sweep", "--dir", str(experiment_dir), "--json")
+
+    assert code == 0
+    payload = json.loads(out)
+    assert len(payload["cells"]) == 4
+    assert payload["fixed"] == {"model": "m"}
+
+
+def test_unknown_experiment_names_the_known_ones(
+    experiment_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The error says which ids do exist, instead of only that this one does not."""
+    code = cli.main(["experiment", "show", "nope", "--dir", str(experiment_dir)])
+
+    assert code == 2
+    assert "known: sweep" in capsys.readouterr().err
+
+
+def test_experiment_run_dry_run_starts_nothing(
+    experiment_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`--dry-run` must show the plan without touching Docker."""
+    code, out = _run(
+        capsys, "experiment", "run", "sweep", "--dir", str(experiment_dir), "--dry-run"
+    )
+
+    assert code == 0
+    assert "4 cell(s) x 3 = 12 run(s)" in out

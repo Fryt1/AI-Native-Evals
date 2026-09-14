@@ -9,6 +9,7 @@ import re
 import shutil
 import sys
 from collections.abc import Sequence
+from dataclasses import replace
 from pathlib import Path
 
 import yaml
@@ -622,11 +623,23 @@ def _compare(args: argparse.Namespace) -> int:
         game_engine_ref=args.game_engine_ref,
         dsh_ref=args.dsh_ref,
         evaluate=not args.no_evaluate,
+        repeat=args.runs,
     )
     if args.json:
         print(json.dumps(report, ensure_ascii=False, indent=2))
     else:
         print(render_comparison_markdown(report))
+    summaries = report.get("agents") or []
+    if any(item.get("unmeasured") for item in summaries):
+        # Not a failure of the comparison, but not a clean result either.
+        print(
+            "note: some attempts did not produce a decision; see Unmeasured above.",
+            file=sys.stderr,
+        )
+    if args.runs > 1 and (report.get("discrimination") or {}).get("separated") is False:
+        # The verdict is honestly undetermined, so the exit code says so rather
+        # than reporting success for a comparison that proves nothing.
+        return 2
     successful = all(
         run.get("status") == "completed"
         and (
@@ -636,6 +649,121 @@ def _compare(args: argparse.Namespace) -> int:
         for run in report.get("runs", [])
     )
     return 0 if successful else 1
+
+
+def _experiments_root(repo_root: Path, override: Path | None) -> Path:
+    """Where experiment definitions live unless the caller names another dir."""
+    if override is not None:
+        return override.expanduser().resolve()
+    return repo_root / "experiments"
+
+
+def _experiment_list(args: argparse.Namespace) -> int:
+    from .experiments.spec import load_experiments
+
+    root = _experiments_root(_repo_root(), args.dir)
+    experiments = load_experiments(root)
+    print(
+        json.dumps(
+            {
+                "directory": str(root),
+                "experiments": {
+                    key: spec.to_dict() for key, spec in sorted(experiments.items())
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    return 0
+
+
+def _experiment_show(args: argparse.Namespace) -> int:
+    from .experiments.spec import ExperimentError, resolve_experiment
+
+    repo_root = _repo_root()
+    try:
+        spec = resolve_experiment(
+            repo_root, args.experiment_id, root=_experiments_root(repo_root, args.dir)
+        )
+    except ExperimentError as exc:
+        raise EvalConfigError(str(exc)) from exc
+    if args.json:
+        print(json.dumps(spec.to_dict(), ensure_ascii=False, indent=2))
+        return 0
+    # The design is the thing being reviewed, so print what it holds constant
+    # next to what it varies, then the cells it actually expands to.
+    lines = [
+        f"experiment : {spec.experiment_id}",
+        f"task       : {spec.task_id}",
+        f"repeats    : {spec.repeats}",
+    ]
+    if spec.description:
+        lines.append(f"description: {spec.description}")
+    vary = ", ".join(f"{key}={list(values)}" for key, values in sorted(spec.vary.items()))
+    lines.append(f"vary       : {vary or '(nothing)'}")
+    fixed = ", ".join(f"{key}={value}" for key, value in sorted(spec.fixed.items()))
+    lines.append(f"fixed      : {fixed or '(nothing)'}")
+    lines.append("")
+    lines.append(f"{len(spec.cells)} cell(s) x {spec.repeats} = {spec.attempt_count} run(s)")
+    for cell in spec.cells:
+        lines.append(f"  [{cell.index}] {cell.label}")
+    print("\n".join(lines))
+    return 0
+
+
+def _experiment_run(args: argparse.Namespace) -> int:
+    from .experiments.runner import ExperimentRunError, render_experiment_markdown, run_experiment
+    from .experiments.spec import ExperimentError, resolve_experiment
+
+    repo_root = _repo_root()
+    try:
+        spec = resolve_experiment(
+            repo_root, args.experiment_id, root=_experiments_root(repo_root, args.dir)
+        )
+    except ExperimentError as exc:
+        raise EvalConfigError(str(exc)) from exc
+    if args.runs is not None:
+        if args.runs < 1:
+            raise EvalConfigError("--runs must be at least 1")
+        # An override is an execution choice, not a definition edit: the design
+        # on disk keeps its own repeat count.
+        spec = replace(spec, repeats=args.runs)
+    if args.dry_run:
+        return _experiment_show(
+            argparse.Namespace(experiment_id=args.experiment_id, dir=args.dir, json=args.json)
+        )
+    # A sensible degree of parallelism by default: enough to hide model latency,
+    # few enough not to look like a burst to the upstream. Measured per attempt:
+    # ~45 s wall clock, ~60 MiB resident, near-zero CPU.
+    concurrency = args.concurrency
+    if concurrency is None:
+        concurrency = max(1, min(4, spec.attempt_count))
+    elif concurrency < 1:
+        raise EvalConfigError("--concurrency must be at least 1")
+    try:
+        payload = run_experiment(
+            repo_root,
+            spec,
+            config_path=args.config.resolve() if args.config else None,
+            evaluate=not args.no_evaluate,
+            concurrency=concurrency,
+        )
+    except ExperimentRunError as exc:
+        raise EvalConfigError(str(exc)) from exc
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        print(render_experiment_markdown(payload))
+    if any(cell.get("unmeasured") for cell in payload.get("cells", [])):
+        print(
+            "note: some attempts did not produce a decision; see Unmeasured above.",
+            file=sys.stderr,
+        )
+    if spec.repeats > 1 and (payload.get("discrimination") or {}).get("separated") is False:
+        # Same contract as `compare`: exit 2 means "ran fine, proves nothing".
+        return 2
+    return 0
 
 
 def _config_show(args: argparse.Namespace) -> int:
@@ -766,6 +894,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     compare_parser.add_argument("task_id")
     compare_parser.add_argument("--agents", required=True, help="comma-separated Agent ids")
+    compare_parser.add_argument(
+        "--runs",
+        type=int,
+        default=1,
+        metavar="N",
+        help=(
+            "attempts per Agent (default 1). A single attempt cannot show variance; "
+            "N>1 reports a pass rate with a 95%% interval and says whether the Agents "
+            "are actually distinguishable. Exit 2 means the sample cannot separate them."
+        ),
+    )
     compare_parser.add_argument("--config", type=Path)
     compare_parser.add_argument("--preset")
     compare_parser.add_argument("--model-profile")
@@ -779,6 +918,50 @@ def main(argv: Sequence[str] | None = None) -> int:
     compare_parser.add_argument("--no-evaluate", action="store_true")
     compare_parser.add_argument(
         "--json", action="store_true", help="print JSON instead of Markdown"
+    )
+
+    experiment_parser = subparsers.add_parser(
+        "experiment", help="run a declared run matrix (what varies, what is frozen, how often)"
+    )
+    experiment_subparsers = experiment_parser.add_subparsers(
+        dest="experiment_command", required=True
+    )
+    experiment_list = experiment_subparsers.add_parser("list", help="list experiment definitions")
+    experiment_list.add_argument("--dir", type=Path, help="experiments directory")
+    experiment_show = experiment_subparsers.add_parser(
+        "show", help="show one design and the cells it expands to"
+    )
+    experiment_show.add_argument("experiment_id")
+    experiment_show.add_argument("--dir", type=Path)
+    experiment_show.add_argument("--json", action="store_true")
+    experiment_run = experiment_subparsers.add_parser(
+        "run", help="execute every cell and persist the result"
+    )
+    experiment_run.add_argument("experiment_id")
+    experiment_run.add_argument("--dir", type=Path)
+    experiment_run.add_argument("--config", type=Path)
+    experiment_run.add_argument(
+        "--runs",
+        type=int,
+        metavar="N",
+        help="override the design's repeats for this execution",
+    )
+    experiment_run.add_argument(
+        "-j",
+        "--concurrency",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "attempts to run at once (default: min(4, attempts)). An attempt waits "
+            "on a model and holds ~60 MiB, so this is bounded by provider rate "
+            "limits, not CPU. Results are reported in a fixed order either way."
+        ),
+    )
+    experiment_run.add_argument("--no-evaluate", action="store_true")
+    experiment_run.add_argument("--json", action="store_true")
+    experiment_run.add_argument(
+        "--dry-run", action="store_true", help="show the cells without starting anything"
     )
 
     task_parser = subparsers.add_parser("task", help="discover and validate Task bundles")
@@ -957,6 +1140,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         if args.command == "compare":
             return _compare(args)
+        if args.command == "experiment":
+            if args.experiment_command == "list":
+                return _experiment_list(args)
+            if args.experiment_command == "show":
+                return _experiment_show(args)
+            if args.experiment_command == "run":
+                return _experiment_run(args)
         if args.command == "task":
             if args.task_command == "list":
                 return _task_list(args)

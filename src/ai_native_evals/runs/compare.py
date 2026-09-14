@@ -1,21 +1,50 @@
-"""Run the same Task through several Agent profiles and persist a comparison."""
+"""Compare several Agents on one Task.
+
+This is an experiment with a single varying axis (`agent`). It exists as its own
+command because "which Agent is better at this Task" is the question asked most
+often, and spelling it as a full experiment definition every time would be
+ceremony. It is not a second implementation: it builds an `ExperimentSpec` and
+hands it to the same runner, so the statistics, the frozen-input record and the
+"this sample cannot tell them apart" verdict are identical however the
+experiment was asked for.
+
+For anything with more than one axis -- a provider sweep, a reasoning-effort
+sweep, two axes at once -- write an experiment definition under `experiments/`
+and use `ai-native-evals experiment run`.
+"""
 
 from __future__ import annotations
 
 import json
 from collections.abc import Iterable
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
 
-from .docker_runtime import DockerRuntimeError, start_docker_run, wait_docker_run
-from .lifecycle import prepare_run
-from .resolver import EvalConfigError, resolve_run
+from ..experiments.runner import (  # noqa: F401 - re-exported for callers
+    ExperimentRunError,
+    render_experiment_markdown,
+    run_experiment,
+)
+from ..experiments.spec import ExperimentSpec
 
 
 class ComparisonError(RuntimeError):
     """Raised when comparison setup cannot be completed."""
+
+
+#: Selectors a comparison may pass through. Kept explicit so a keyword that is
+#: silently dropped cannot look like a frozen input.
+_PASSTHROUGH = (
+    "model_profile",
+    "provider",
+    "model",
+    "reasoning_effort",
+    "mcp_profile",
+    "sandbox_profile",
+    "preset",
+    "game_engine_ref",
+    "dsh_ref",
+)
 
 
 def compare_task(
@@ -34,123 +63,129 @@ def compare_task(
     game_engine_ref: str | None = None,
     dsh_ref: str | None = None,
     evaluate: bool = True,
+    repeat: int = 1,
+    runs_root: Path | None = None,
 ) -> dict[str, Any]:
-    """Execute each Agent sequentially under identical Task conditions."""
-    from ..evaluation.runner import EvaluationError, evaluate_run
-
-    selected_agents = tuple(dict.fromkeys(agent.strip() for agent in agents if agent.strip()))
-    if not selected_agents:
+    """Execute each Agent ``repeat`` times under identical Task conditions."""
+    selected = tuple(dict.fromkeys(agent.strip() for agent in agents if agent.strip()))
+    if not selected:
         raise ComparisonError("compare requires at least one Agent id")
-    repo_root = repo_root.resolve()
-    specs = [
-        resolve_run(
-            repo_root,
-            task_id,
-            config_path=config_path,
-            agent=agent,
-            model_profile=model_profile,
-            provider=provider,
-            model=model,
-            reasoning_effort=reasoning_effort,
-            mcp_profile=mcp_profile,
-            sandbox_profile=sandbox_profile,
-            preset=preset,
-            game_engine_ref=game_engine_ref,
-            dsh_ref=dsh_ref,
-        )
-        for agent in selected_agents
-    ]
-    first = specs[0]
-    invariant = {
-        "task_id": task_id,
-        "task_bundle": first.task_bundle,
-        "test_plan": first.test_plan.to_dict(),
-        "model_profile": first.model_profile,
-        "model": first.model,
-        "model_provider": first.model_provider,
-        "provider": first.provider,
-        "reasoning_effort": first.reasoning_effort,
-        "mcp_profile": first.mcp_profile,
-        "mcp_servers": first.mcp_servers,
-        "sandbox_profile": first.sandbox_profile,
-        "sandbox": first.sandbox,
-        "resource_specs": [resource.to_dict() for resource in first.resource_specs],
-    }
-    runs: list[dict[str, Any]] = []
-    for spec in specs:
-        run_record: dict[str, Any] = {
-            "agent": spec.agent,
-            "model": spec.model,
-            "run_id": spec.run_id,
-            "status": "not_started",
-        }
-        try:
-            run_dir = prepare_run(
-                repo_root,
-                spec,
-                game_engine_ref=game_engine_ref,
-                dsh_ref=dsh_ref,
-            )
-            start_docker_run(run_dir, repo_root)
-            manifest = wait_docker_run(run_dir)
-            run_record["run_dir"] = str(run_dir)
-            run_record["status"] = manifest.get("status")
-            if evaluate and manifest.get("status") in {"completed", "failed"}:
-                run_record["evaluation"] = evaluate_run(run_dir, repo_root=repo_root)
-        except (DockerRuntimeError, EvalConfigError, EvaluationError, OSError, ValueError) as exc:
-            run_record.update({"status": "error", "error": f"{type(exc).__name__}: {exc}"})
-        runs.append(run_record)
 
-    runs_root = first.runs_root
-    comparison_id = f"{task_id}-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}-{uuid4().hex[:6]}"
-    output_dir = runs_root / "comparisons" / comparison_id
-    output_dir.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "comparison_id": comparison_id,
-        "created_at": datetime.now(UTC).isoformat(),
-        "config_path": str(config_path.resolve()) if config_path else None,
-        "invariant": invariant,
-        "runs": runs,
-        "output_dir": str(output_dir),
+    supplied = {
+        "model_profile": model_profile,
+        "provider": provider,
+        "model": model,
+        "reasoning_effort": reasoning_effort,
+        "mcp_profile": mcp_profile,
+        "sandbox_profile": sandbox_profile,
+        "preset": preset,
+        "game_engine_ref": game_engine_ref,
+        "dsh_ref": dsh_ref,
     }
-    _write_json(output_dir / "comparison.json", payload)
-    (output_dir / "comparison.md").write_text(render_comparison_markdown(payload), encoding="utf-8")
-    return payload
+    # An explicit flag is a frozen input; an omitted one is left to the Task and
+    # project defaults, and recording `None` as frozen would claim the design
+    # pinned something it never mentioned.
+    fixed = {key: str(value) for key, value in supplied.items() if value is not None}
+
+    spec = ExperimentSpec(
+        experiment_id=f"compare-{task_id}",
+        task_id=task_id,
+        vary={"agent": selected},
+        fixed=fixed,
+        repeats=repeat,
+        description=f"{len(selected)} Agents on {task_id}",
+    )
+    # The runner emits `experiment_run_id`/`cells`/`attempts`. A comparison is
+    # indexed by the Console from `comparisons/*/comparison.json` and read
+    # through its own projection, so the payload keeps that shape and its own
+    # directory: same numbers and the same extension point the reader already
+    # walks. `experiment run` writes the richer artifact under `experiments/`.
+    payload = run_experiment(
+        repo_root,
+        spec,
+        config_path=config_path,
+        evaluate=evaluate,
+        runs_root=runs_root,
+        artifact_dir="comparisons",
+    )
+    comparison = {
+        "comparison_id": payload["experiment_run_id"],
+        "created_at": payload["created_at"],
+        "config_path": payload["config_path"],
+        "invariant": payload["invariant"],
+        "repeat": payload["definition"]["repeats"],
+        "runs": [
+            _as_comparison_run(attempt, agents=selected) for attempt in payload["attempts"]
+        ],
+        "agents": [
+            {**cell, "agent": cell.get("selectors", {}).get("agent", "")}
+            for cell in payload["cells"]
+        ],
+        "discrimination": payload["discrimination"],
+        "output_dir": payload["output_dir"],
+    }
+    _write_comparison_artifact(Path(payload["output_dir"]), comparison)
+    return comparison
+
+
+def _write_comparison_artifact(output_dir: Path, payload: dict[str, Any]) -> None:
+    """Persist ``comparison.json`` + ``comparison.md`` where the Console looks."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "comparison.json").write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    (output_dir / "comparison.md").write_text(
+        render_comparison_markdown(payload), encoding="utf-8"
+    )
+
+
+def _as_comparison_run(attempt: dict[str, Any], *, agents: tuple[str, ...]) -> dict[str, Any]:
+    """One attempt in the flat shape the Console's comparison reader expects.
+
+    It iterates `runs` and reads `run_id`/`agent`/`status`/`evaluation`/`error`
+    from each entry, so those keys must stay exactly where they were.
+    """
+    record = {
+        key: attempt[key]
+        for key in (
+            "agent",
+            "model",
+            "run_id",
+            "attempt",
+            "status",
+            "run_dir",
+            "evaluation",
+            "error",
+        )
+        if key in attempt
+    }
+    selectors = attempt.get("selectors") or {}
+    if not record.get("agent"):
+        record["agent"] = selectors.get("agent") or (agents[0] if agents else "")
+    return record
 
 
 def render_comparison_markdown(payload: dict[str, Any]) -> str:
-    """Render a compact comparison table for humans and CI artifacts."""
-    lines = [
-        f"# Agent comparison: `{payload.get('invariant', {}).get('task_id', '')}`",
-        "",
-        f"- comparison: `{payload.get('comparison_id', '')}`",
-        f"- created: `{payload.get('created_at', '')}`",
-        "",
-        "| Agent | Run | Status | Outcome | Quality | Process | Decision |",
-        "|---|---|---|---:|---:|---:|---|",
-    ]
-    for run in payload.get("runs", []):
-        evaluation = run.get("evaluation") or {}
-        lines.append(
-            (
-                "| {agent} | `{run_id}` | {status} | {outcome} | {quality} | "
-                "{process} | {decision} |"
-            ).format(
-                agent=run.get("agent", ""),
-                run_id=run.get("run_id", ""),
-                status=run.get("status", ""),
-                outcome=evaluation.get("outcome_score", "-"),
-                quality=evaluation.get("quality_score", "-"),
-                process=evaluation.get("process_score", "-"),
-                decision=evaluation.get("decision", "-"),
-            )
-        )
-    if payload.get("output_dir"):
-        lines.extend(["", f"Output: `{payload['output_dir']}`"])
-    return "\n".join(lines) + "\n"
-
-
-def _write_json(path: Path, value: Any) -> None:
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    temporary.replace(path)
+    """Render a comparison with the same tables an experiment produces."""
+    return render_experiment_markdown(
+        {
+            "experiment_run_id": payload.get("comparison_id", ""),
+            "experiment_id": f"compare-{payload.get('invariant', {}).get('task_id', '')}",
+            "created_at": payload.get("created_at", ""),
+            "definition": {
+                "task_id": payload.get("invariant", {}).get("task_id", ""),
+                "vary": {"agent": [item.get("agent", "") for item in payload.get("agents", [])]},
+                "fixed": payload.get("invariant", {}).get("fixed", {}),
+                "repeats": payload.get("repeat", 1),
+            },
+            "cells": [
+                {**cell, "label": cell.get("agent") or cell.get("label", "")}
+                for cell in payload.get("agents", [])
+            ],
+            "attempts": [
+                {**run, "cell": run.get("agent", "")} for run in payload.get("runs", [])
+            ],
+            "discrimination": payload.get("discrimination", {}),
+            "output_dir": payload.get("output_dir", ""),
+        }
+    )

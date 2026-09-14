@@ -1,0 +1,20 @@
+# Two axes at once: does the result depend on the Agent, the reasoning budget,
+# or both?
+#
+# This is the shape `compare` cannot express. Four cells x 3 attempts = 12 runs,
+# and the report says whether any two cells are actually distinguishable or
+# whether the sample is too small to tell.
+id: reasoning-effort-sweep
+description: Agent × reasoning effort 的二维扫描，检验结果是否随思考预算变化
+task_id: codex-file-smoke
+vary:
+  agent:
+    - codex
+  reasoning_effort:
+    - low
+    - high
+fixed:
+  model: gpt-5.6-luna
+  mcp_profile: none
+  sandbox_profile: docker-default
+repeats: 3
