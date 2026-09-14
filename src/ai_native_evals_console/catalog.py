@@ -274,11 +274,20 @@ class Catalog:
                 for row in connection.execute("SELECT run_id FROM runs").fetchall():
                     if row[0] not in seen_runs:
                         connection.execute("DELETE FROM runs WHERE run_id = ?", (row[0],))
-            comparison_root = self.runs_root / "comparisons"
+            # `comparisons/` and `experiments/` hold the same artifact shape (an
+            # experiment is a comparison with more than one varying axis), so one
+            # reader indexes both. Scanning only `comparisons/` would leave every
+            # matrix experiment invisible in the Console.
             seen_comparisons: set[str] = set()
-            if comparison_root.is_dir():
+            for folder in ("comparisons", "experiments"):
+                comparison_root = self.runs_root / folder
+                if not comparison_root.is_dir():
+                    continue
                 for comparison_dir in sorted(comparison_root.iterdir()):
                     path = comparison_dir / "comparison.json"
+                    if not path.is_file():
+                        # `experiment run` names it after the module.
+                        path = comparison_dir / "experiment.json"
                     if not path.is_file():
                         continue
                     payload = load_json(path)

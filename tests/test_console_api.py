@@ -247,6 +247,51 @@ def test_catalog_reindex_is_repeatable_and_comparison_is_readable(tmp_path: Path
     assert response.json()["output_dir"] is None
 
 
+def test_experiment_artifacts_are_indexed_like_comparisons(tmp_path: Path) -> None:
+    """`experiment run` writes `experiments/<id>/experiment.json`.
+
+    The Console scanned only `comparisons/`, so a matrix experiment was invisible
+    in the UI even though it carries the same facts under the same keys. An
+    experiment is a comparison with more than one varying axis; one reader has to
+    see both.
+    """
+    experiment_dir = tmp_path / "experiments" / "sweep-20260914T000000Z-abc123"
+    experiment_dir.mkdir(parents=True)
+    (experiment_dir / "experiment.json").write_text(
+        json.dumps(
+            {
+                "experiment_run_id": experiment_dir.name,
+                "comparison_id": experiment_dir.name,
+                "experiment_id": "sweep",
+                "created_at": "2026-09-14T00:00:00+00:00",
+                "invariant": {"task_id": "demo-task", "fixed": {"model": "m"}, "repeats": 3},
+                "cells": [{"label": "agent=codex", "pass_rate": 0.67, "measured": 3}],
+                "runs": [
+                    {
+                        "agent": "codex",
+                        "run_id": "run-1",
+                        "attempt": 1,
+                        "status": "completed",
+                        "evaluation": {"decision": "pass"},
+                    }
+                ],
+                "discrimination": {"separated": False, "reason": "overlap"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    client = TestClient(create_app(repo_root=tmp_path, runs_root=tmp_path))
+
+    listing = client.get("/api/v1/comparisons")
+    assert listing.status_code == 200
+    assert [item["comparison_id"] for item in listing.json()["items"]] == [experiment_dir.name]
+
+    detail = client.get(f"/api/v1/comparisons/{experiment_dir.name}")
+    assert detail.status_code == 200
+    assert len(detail.json()["runs"]) == 1
+    assert str(tmp_path) not in detail.text
+
+
 def test_evaluator_child_trace_is_readable_without_becoming_a_top_level_run(tmp_path: Path) -> None:
     run_dir = _write_run(tmp_path)
     evaluator_dir = (
