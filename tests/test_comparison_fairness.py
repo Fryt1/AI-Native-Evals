@@ -42,6 +42,33 @@ def test_switching_reasoning_breaks_the_fingerprint() -> None:
     )
 
 
+def test_a_declared_varying_axis_is_not_an_unfairness() -> None:
+    """A sweep that varies an axis must not be flagged as a broken invariant.
+
+    The fingerprint exists to catch a run differing in an input the design meant
+    to hold constant. When the design *says* it varies `reasoning_effort`, a
+    difference there is the experiment working -- and reporting it as unfair
+    would flag every well-formed sweep, which is how a real warning gets ignored.
+    """
+    low = _manifest(reasoning_effort="low")
+    high = _manifest(reasoning_effort="high")
+
+    assert _comparison_fingerprint(low) != _comparison_fingerprint(high)
+    assert _comparison_fingerprint(low, varying={"reasoning_effort"}) == (
+        _comparison_fingerprint(high, varying={"reasoning_effort"})
+    )
+
+
+def test_a_varying_axis_does_not_hide_a_real_difference() -> None:
+    """Excluding the varying axis must not blind the check to everything else."""
+    left = _manifest(reasoning_effort="low")
+    right = _manifest(reasoning_effort="high", provider="deepseek")
+
+    assert _comparison_fingerprint(left, varying={"reasoning_effort"}) != (
+        _comparison_fingerprint(right, varying={"reasoning_effort"})
+    )
+
+
 def test_switching_only_the_agent_keeps_the_fingerprint() -> None:
     """Comparing two Agents must not be reported as an unfair comparison.
 

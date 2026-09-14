@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -359,26 +359,44 @@ def artifact_content(
     return artifact_path(Path(summary["run_dir"]), artifact_id)
 
 
-def _comparison_fingerprint(manifest: Mapping[str, Any]) -> str:
+#: Fingerprint fields that a design may legitimately vary. A comparison that
+#: varies `agent` is comparing Agents; a matrix that varies `reasoning_effort` is
+#: measuring that axis. Either way the varying field is the question, not a
+#: broken invariant, so it is excluded from the fairness fingerprint.
+_FINGERPRINT_FIELDS = (
+    "task_id",
+    "task_bundle",
+    "test_plan",
+    "model_profile",
+    "model",
+    "model_provider",
+    "provider",
+    "provider_env_file",
+    "reasoning_effort",
+    "mcp_profile",
+    "mcp_servers",
+    "sandbox_profile",
+    "sandbox",
+    "resource_specs",
+)
+
+
+def _comparison_fingerprint(
+    manifest: Mapping[str, Any], *, varying: Collection[str] = ()
+) -> str:
+    """A digest of the inputs a comparison held fixed.
+
+    ``varying`` names the axes the design deliberately changes. Omitting them is
+    what makes the fingerprint mean "these runs shared every controlled input"
+    rather than "these runs were identical" -- the latter is false by
+    construction for any experiment worth running, and reporting it as an
+    unfairness would flag every well-formed sweep.
+    """
     run = run_from_manifest(manifest)
     value = {
-        "task_id": run.get("task_id"),
-        "task_bundle": run.get("task_bundle"),
-        "test_plan": run.get("test_plan"),
-        "model_profile": run.get("model_profile"),
-        "model": run.get("model"),
-        "model_provider": run.get("model_provider"),
-        # Which upstream served the run, and how hard the model was asked to
-        # think. Two runs differing here are not the same measurement, so the
-        # fairness check must see them.
-        "provider": run.get("provider"),
-        "provider_env_file": run.get("provider_env_file"),
-        "reasoning_effort": run.get("reasoning_effort"),
-        "mcp_profile": run.get("mcp_profile"),
-        "mcp_servers": run.get("mcp_servers"),
-        "sandbox_profile": run.get("sandbox_profile"),
-        "sandbox": run.get("sandbox"),
-        "resource_specs": run.get("resource_specs"),
+        field: run.get(field)
+        for field in _FINGERPRINT_FIELDS
+        if field not in varying
     }
     import hashlib
     import json
@@ -392,6 +410,15 @@ def comparison_detail(catalog: Catalog, comparison_id: str) -> dict[str, Any] | 
     payload = catalog.get_comparison(comparison_id)
     if not payload:
         return None
+    raw_invariant = payload.get("invariant")
+    raw_invariant = raw_invariant if isinstance(raw_invariant, Mapping) else {}
+    # The design records which axes it changes. Two runs that differ only in a
+    # declared axis are the experiment working, not a broken invariant.
+    # `agent` is always varying: comparing Agents is the point of `compare`.
+    raw_vary = raw_invariant.get("vary")
+    varying = {"agent"}
+    if isinstance(raw_vary, Mapping):
+        varying |= {str(key) for key in raw_vary}
     runs = []
     check_matrix: dict[str, dict[str, Any]] = {}
     fingerprints: list[str] = []
@@ -415,7 +442,7 @@ def comparison_detail(catalog: Catalog, comparison_id: str) -> dict[str, Any] | 
         if internal_summary:
             run_manifest = read_manifest(Path(internal_summary["run_dir"]))
             if run_manifest:
-                fingerprints.append(_comparison_fingerprint(run_manifest))
+                fingerprints.append(_comparison_fingerprint(run_manifest, varying=varying))
             detail = run_detail(catalog, run_id)
             for check in (detail or {}).get("checks", []):
                 check_id = str(check.get("check_id") or "")
