@@ -7,6 +7,8 @@ This repository is an evaluation suite built on the external `inspect-ai` packag
 ## Ownership
 
 - `tasks/<task-id>/` owns Task Bundle data: prompt, resources, TestPlan and optional Rubric.
+- `experiments/<id>.yaml` owns experiment *definitions* (what varies, what is frozen, how many repeats); `src/ai_native_evals/experiments/` owns loading, validation, the run matrix, and the statistics. Definitions are data and belong in git; do not add a flag per axis to `compare` instead.
+- `src/ai_native_evals/runs/compare.py` is the single-axis case of an experiment and must delegate to the experiment runner. It may not grow its own execution loop, statistics, or artifact shape.
 - `profiles/agents/` owns Agent launch profiles; `profiles/models/` owns model/provider choices.
 - `src/ai_native_evals/agents/` owns the stable AgentAdapter seam and registry.
 - `src/ai_native_evals/adapters/` owns Codex/DSH protocol translation and normalized Agent events.
@@ -51,6 +53,7 @@ Rules:
 
 - Do not classify an Agent as successful from its final natural-language report, nor from the workflow's own self-authored Stage acceptance.
 - Use the same Task Bundle, fixture, tool surface, time limits, permissions, and Evaluator when comparing Agents.
+- Never draw a conclusion about an Agent from a single run. An evaluation is a sample: report a pass rate with its interval, keep infrastructure failures out of the denominator, and say plainly when the sample cannot separate the conditions. `docs/EXPERIMENTS.md` defines the contract.
 - Record versions, hashes, Profile, model and resource snapshots needed to reproduce a run.
 - Keep expected answers and hidden acceptance metadata out of the subject Agent prompt.
 - Keep Agent-specific logic inside a Profile, Solver or Adapter. Do not add Codex/DSH branches to shared Evaluators.

@@ -37,6 +37,7 @@ EvaluationReport + Inspect Transcript/Viewer
 - [Run 生命周期](docs/RUN_LIFECYCLE.md)
 - [评测管线](docs/EVALUATION_PIPELINE.md)
 - [TestPlan 语法](docs/TEST_PLANS.md)
+- [实验：重复运行与矩阵](docs/EXPERIMENTS.md)
 - [离线缓存](docs/OFFLINE_SANDBOX_CACHE.md)
 - [Codex / DSH 同 Task 实跑结果](docs/CODEX_DSH_COMPARISON.md)
 
@@ -50,12 +51,14 @@ profiles/mcp/           MCP/宿主服务 Profile
 profiles/sandboxes/     Docker/WSL Sandbox Profile
 config/presets/         常用运行组合（只绑定 Profile id）
 tasks/<id>/             Task Bundle：task.yaml + prompt.md + rubric.yaml
+experiments/            实验定义：vary / fixed / repeats（只放数据）
 prompts/                跨 Task 复用的 Locator/Judge Prompt
 src/ai_native_evals/
 ├── agents/             AgentAdapter、Profile、Registry
 ├── adapters/           Codex JSONL、DSH ACP、统一 Trace、Inspect 投影
 ├── resources/          Task 资源声明与快照 Provider
 ├── evaluation/         TestPlan Runner 和 EvaluationReport
+├── experiments/        实验设计加载、run matrix、统计（Wilson/通过率/区分度）
 ├── scorers/            Inspect Scorer/领域验收适配
 ├── solvers/            通用 agent_solver 与兼容 Solver
 └── runs/               Workspace、Docker、生命周期和 Evaluator Sandbox
@@ -255,10 +258,31 @@ resources:
 同一个 Task 对比 Agent：
 
 ```powershell
-uv run ai-native-evals compare my-task --agents codex,dsh-release --preset codex-default
+uv run ai-native-evals compare codex-file-smoke --agents codex,dsh-release --runs 5
 ```
 
 这两次运行复用相同的 Prompt、资源、MCP、超时、TestPlan 和 Rubric，只替换被测 Profile；Outcome Locator/Quality Judge 默认仍由 `codex` Profile 执行。底层仍通过 `profiles/models/*.yaml` 的 Model Binding 解析；Console 将 Provider 和 Model 分开展示和选择，再映射到对应 Binding，不会修改本机其他 Codex 会话配置。
+
+> **不要用单次运行下结论。** 同一个 Agent 在同一个 Task 上会时而通过时而失败。
+> `--runs N` 会把结果报成通过率 + 95% 置信区间，并明确说明这个样本量**能不能区分**
+> 两个 Agent；区分不了时命令返回 2。见[实验：重复运行与矩阵](docs/EXPERIMENTS.md)。
+
+要同时变多个维度（Agent × Provider × 推理强度），写一份实验定义：
+
+```powershell
+uv run ai-native-evals experiment list
+uv run ai-native-evals experiment show reasoning-effort-sweep
+uv run ai-native-evals experiment run reasoning-effort-sweep -j 8
+```
+
+定义放在 `experiments/*.yaml`：`vary` 是要变的轴（笛卡尔积），`fixed` 是冻结的
+输入（会写进 invariant），`repeats` 是每个组合跑几次。
+
+`-j N` 指定并发；每次 attempt 自带 run id / workspace / 网络与容器，互不干扰。
+实测单次约 60 MiB、CPU 几乎空闲（瓶颈是等模型），因此上限是上游限流与 WSL 内存。
+本机实测 `-j 4` 加速 3.11x、`-j 8` 加速 5.40x，且结果顺序与串行完全一致。
+
+进程被强杀会留下容器，用 `uv run ai-native-evals reclaim` 回收（先 `--dry-run` 看）。
 
 ## Agent 接入
 

@@ -1332,6 +1332,11 @@ POST /api/v1/admin/reindex             重建 SQLite 索引
 索引是可重建的派生数据，不是 Run 事实，因此这是允许的——但它意味着"只读请求"
 仍会触碰 `EvalRuns/.console/`。
 
+索引同时扫描 `comparisons/` 与 `experiments/`：两者是同一份产物形状（实验就是
+多轴版本的对比），因此共用同一个读取器。`experiment run` 写
+`experiments/<id>/experiment.json`，`compare` 写 `comparisons/<id>/comparison.json`，
+在 Console 里都是 Comparison。
+
 默认只监听回环地址；一旦用 `--host 0.0.0.0` 暴露，上述端点全部对网络开放，
 当前**没有**认证、CSRF 或 Origin 校验。
 

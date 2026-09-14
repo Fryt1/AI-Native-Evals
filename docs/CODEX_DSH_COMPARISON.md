@@ -5,6 +5,11 @@
 > `codex-file-smoke` 与 `blender-scene-build`。本文保留当时的结论与 Run ID，因为
 > 它记录的是**当时真实发生过的事**；改写 Run ID 去迁就当前的目录树会让记录失真。
 > 要复现同样的对比，请用现存的 Task 重跑，见文末。
+>
+> **另外请注意：下表每个 Agent 只有一次运行。** 它证明的是「这条链路能跑通、
+> 两个 Agent 都能被同一套 Task/Evaluator 判定」，**不是**「Codex 和 DSH 一样好」。
+> 单次运行的差异可能只是采样波动，当时也还没有重复运行机制。要得出能力结论，
+> 必须用 `--runs N` 或实验定义重复采样，见 [EXPERIMENTS.md](EXPERIMENTS.md)。
 
 在 **2026 年 9 月 8 日**，使用同一 `structured-report-contract` Task、同一模型 Profile、同一 Gateway、同一 TestPlan 和同一 Outcome/Quality Evaluator，分别运行了两个 Docker Agent：
 
@@ -44,11 +49,21 @@ workspace/trace/evaluators/
 
 ## 复现同样的对比
 
-用现存的 Task 重跑，被测 Agent 由 `--agents` 切换，Task/TestPlan/Evaluator 不变：
+用现存的 Task 重跑，被测 Agent 由 `--agents` 切换，Task/TestPlan/Evaluator 不变。
+**加上 `--runs`**，否则你复现的仍然是一次采样：
 
 ```powershell
-uv run ai-native-evals compare codex-file-smoke --agents codex,dsh-release --preset codex-default
+uv run ai-native-evals compare codex-file-smoke --agents codex,dsh-release --runs 5
 ```
+
+也可以直接跑仓库里已经写好的定义，它把上面这条命令的输入固定成了可评审的数据：
+
+```powershell
+uv run ai-native-evals experiment run agent-comparison
+```
+
+`repeats` 与 `--runs` 的含义相同；`repeats` 属于设计，写进定义，`--runs` 只覆盖
+这一次执行。
 
 ## 解释
 
