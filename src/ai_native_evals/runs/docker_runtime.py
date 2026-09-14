@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import os
 import subprocess
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -264,6 +265,170 @@ def read_docker_logs(
         "container": runtime["agent_container"],
         "logs": _combined_output(result),
     }
+
+
+#: Run statuses that mean the run is over. A run in any other state may still be
+#: using its containers, so reclaim must leave it alone.
+_TERMINAL_RUN_STATUSES = frozenset({"completed", "failed", "error", "stopped"})
+
+
+def _owning_run(name: str, known: dict[str, Path]) -> tuple[str, Path | None]:
+    """Which known run a resource name belongs to.
+
+    Matched by longest known run id that prefixes the resource's run portion,
+    rather than by reverse-parsing the name. Names have taken more than one shape
+    (`{run_id}`, `{run_id}-{nonce}-{role}-eval`, each with optional container
+    suffixes), and a parser that must invert every historical spelling will
+    eventually mis-attribute one -- which for a reclaim command means deleting
+    another run's resources.
+    """
+    prefix = "ai-native-eval-"
+    if not name.startswith(prefix):
+        return "", None
+    remainder = name[len(prefix) :]
+    best_id = ""
+    for run_id in known:
+        if remainder == run_id or remainder.startswith(run_id + "-"):
+            if len(run_id) > len(best_id):
+                best_id = run_id
+    return best_id, known.get(best_id)
+
+
+def reclaim_grace_seconds() -> int:
+    """How long a finished run's resources are left alone.
+
+    A run is marked terminal before its evaluator sandbox has finished, so
+    "terminal" alone does not mean "unattended". Waiting keeps reclaim from
+    pulling containers out from under an evaluation that is still running.
+    """
+    raw = os.environ.get("AI_NATIVE_EVALS_RECLAIM_GRACE_SECONDS", "900")
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return 900
+
+
+def list_orphan_resources(
+    runs_root: Path,
+    *,
+    wsl_distro: str | None = None,
+    grace_seconds: int | None = None,
+) -> list[dict[str, str]]:
+    """Docker resources whose run is finished, but which were never removed.
+
+    A run releases its containers when it completes, but a process that is killed
+    -- Ctrl-C, a closed terminal, an interrupted experiment -- never reaches that
+    code, and what it started stays behind. Nothing notices, because the run's own
+    manifest says whatever it last wrote.
+
+    A resource is an orphan when the run that owns it is finished *and* has been
+    quiet for ``grace_seconds``. The quiet period is what makes this safe: a run
+    reaches a terminal status before its evaluator containers have been cleaned
+    up, so status alone would put a live evaluation in scope.
+    """
+    distro = wsl_distro or os.environ.get(
+        "AI_NATIVE_EVALS_WSL_DISTRO", _DEFAULT_WSL_DISTRO
+    )
+    grace = reclaim_grace_seconds() if grace_seconds is None else grace_seconds
+    now = time.time()
+
+    known: dict[str, Path] = {}
+    finished: dict[str, bool] = {}
+    if runs_root.is_dir():
+        for run_dir in sorted(runs_root.iterdir()):
+            manifest_path = run_dir / "run-manifest.json"
+            if not manifest_path.is_file():
+                continue
+            try:
+                manifest = load_manifest(run_dir)
+            except (OSError, ValueError):
+                continue
+            run = manifest.get("run") if isinstance(manifest, dict) else None
+            if not isinstance(run, dict) or not run.get("run_id"):
+                continue
+            run_id = str(run["run_id"])
+            known[run_id] = run_dir
+            terminal = str(manifest.get("status") or "") in _TERMINAL_RUN_STATUSES
+            try:
+                quiet = (now - manifest_path.stat().st_mtime) >= grace
+            except OSError:
+                quiet = False
+            finished[run_id] = terminal and quiet
+
+    orphans: list[dict[str, str]] = []
+    for kind, list_args in (
+        ("container", ["ps", "-a", "--format", "{{.Names}}"]),
+        ("network", ["network", "ls", "--format", "{{.Name}}"]),
+    ):
+        result = _docker_raw(str(distro), *list_args)
+        if result.returncode != 0:
+            continue
+        for name in _combined_output(result).split():
+            if not name.startswith("ai-native-eval-"):
+                continue
+            run_id, run_dir = _owning_run(name, known)
+            if run_dir is None:
+                # Nothing on disk claims this resource, so nothing will ever
+                # clean it up.
+                orphans.append(
+                    {"kind": kind, "name": name, "run_id": run_id, "run_dir": ""}
+                )
+                continue
+            if not finished.get(run_id, False):
+                continue
+            orphans.append(
+                {"kind": kind, "name": name, "run_id": run_id, "run_dir": str(run_dir)}
+            )
+    return orphans
+
+
+def _run_id_from_resource(name: str) -> str:
+    """Best-effort free-text form of a resource's run portion.
+
+    Kept for diagnostics and messages only. Ownership is decided by
+    :func:`_owning_run`, which matches against the run ids actually on disk
+    instead of trying to invert every historical naming shape.
+    """
+    prefix = "ai-native-eval-"
+    if not name.startswith(prefix):
+        return ""
+    remainder = name[len(prefix) :]
+    for suffix in ("-agent", "-gateway"):
+        if remainder.endswith(suffix):
+            remainder = remainder[: -len(suffix)]
+            break
+    if remainder.endswith("-eval"):
+        remainder = remainder[: -len("-eval")]
+    return remainder
+
+
+def reclaim_orphans(
+    runs_root: Path,
+    *,
+    wsl_distro: str | None = None,
+) -> dict[str, Any]:
+    """Remove the orphaned containers and networks one at a time."""
+    distro = wsl_distro or os.environ.get(
+        "AI_NATIVE_EVALS_WSL_DISTRO", _DEFAULT_WSL_DISTRO
+    )
+    orphans = list_orphan_resources(runs_root, wsl_distro=distro)
+    removed: list[str] = []
+    errors: list[str] = []
+    # Containers first, then networks: a network cannot be removed while a
+    # container is still attached to it.
+    for kind in ("container", "network"):
+        for orphan in [item for item in orphans if item["kind"] == kind]:
+            args = (
+                ["rm", "--force", orphan["name"]]
+                if kind == "container"
+                else ["network", "rm", orphan["name"]]
+            )
+            result = _docker_raw(str(distro), *args)
+            if result.returncode in (0, 1):
+                removed.append(orphan["name"])
+            else:
+                errors.append(f"{orphan['name']}: {_command_error(result)}")
+    return {"removed": removed, "errors": errors, "found": orphans}
 
 
 def stop_docker_run(

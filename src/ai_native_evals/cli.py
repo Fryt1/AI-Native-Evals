@@ -766,6 +766,38 @@ def _experiment_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _reclaim(args: argparse.Namespace) -> int:
+    """Find and remove Docker resources left behind by finished or killed runs."""
+    from .runs import list_orphan_resources, reclaim_orphans
+
+    repo_root = _repo_root()
+    runs_root = Path(
+        manifest_runs_root(repo_root) if not args.runs_root else args.runs_root
+    )
+    orphans = list_orphan_resources(runs_root, wsl_distro=args.distro)
+    if not orphans:
+        print(f"no orphaned Docker resources under {runs_root}")
+        return 0
+    if args.dry_run:
+        print(f"{len(orphans)} orphaned resource(s) under {runs_root}:")
+        for orphan in orphans:
+            print(f"  {orphan['kind']:<9} {orphan['name']}  (run {orphan['run_id'] or 'unknown'})")
+        return 0
+    result = reclaim_orphans(runs_root, wsl_distro=args.distro)
+    for name in result["removed"]:
+        print(f"removed {name}")
+    for error in result["errors"]:
+        print(f"error: {error}", file=sys.stderr)
+    return 0 if not result["errors"] else 1
+
+
+def manifest_runs_root(repo_root: Path) -> Path:
+    """The runs root the repository config resolves to."""
+    from .runs.resolver import load_config, resolve_runs_root
+
+    return resolve_runs_root(repo_root, load_config(repo_root / "config" / "eval.yaml"))
+
+
 def _config_show(args: argparse.Namespace) -> int:
     repo_root = _repo_root()
     path, config = _config_for_repo(repo_root, args.config)
@@ -1036,6 +1068,16 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     subparsers.add_parser("doctor", help="check local evaluator wiring")
 
+    reclaim_parser = subparsers.add_parser(
+        "reclaim",
+        help="remove Docker resources left behind by a killed or interrupted run",
+    )
+    reclaim_parser.add_argument(
+        "--dry-run", action="store_true", help="list what would be removed, remove nothing"
+    )
+    reclaim_parser.add_argument("--runs-root", type=Path, help="override the runs root")
+    reclaim_parser.add_argument("--distro", help="WSL distro hosting Docker")
+
     preflight_parser = subparsers.add_parser(
         "preflight", help="check that this machine can start a run (tools, images, credentials)"
     )
@@ -1172,6 +1214,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _config_show(args)
         if args.command == "doctor":
             return _doctor(args)
+        if args.command == "reclaim":
+            return _reclaim(args)
         if args.command == "preflight":
             return _preflight(args)
         if args.command == "console":

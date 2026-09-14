@@ -4,7 +4,9 @@ from .agent_sandbox import EvaluatorAgentResult, default_readonly_mounts, run_ev
 from .compare import ComparisonError, compare_task, render_comparison_markdown
 from .docker_runtime import (
     DockerRuntimeError,
+    list_orphan_resources,
     read_docker_logs,
+    reclaim_orphans,
     start_docker_run,
     stop_docker_run,
     wait_docker_run,
@@ -30,10 +32,12 @@ __all__ = [
     "cleanup_run",
     "compare_task",
     "default_readonly_mounts",
+    "list_orphan_resources",
     "load_config",
     "load_manifest",
     "prepare_run",
     "read_docker_logs",
+    "reclaim_orphans",
     "resolve_run",
     "render_comparison_markdown",
     "run_evaluator_agent",
