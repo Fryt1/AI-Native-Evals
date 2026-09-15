@@ -30,6 +30,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from . import docker_cli
 from .images import inspect_image, wsl_distro
 
 if TYPE_CHECKING:
@@ -237,7 +238,7 @@ def check_static(
                 "image",
                 "missing",
                 detail=f"{image} 不存在",
-                hint="运行：pwsh -File tools/build-sandbox-images.ps1",
+                hint=f"运行：{_build_hint()}",
             )
         )
     elif status.present is None:
@@ -324,7 +325,14 @@ def smoke_test_agent(
     name = f"agent-check-{agent.replace('_', '-')[:20]}"
     network, gateway, container = f"{name}-net", f"{name}-gw", f"{name}-c"
     key = "agent-check-key"
-    with tempfile.TemporaryDirectory(prefix="agent-check-") as workspace_raw:
+    # The probe mounts a host directory into the container, so it must use a
+    # location the *daemon* can bind-mount, not merely one this process can
+    # write. On Windows the daemon lives in WSL and the system temp directory
+    # is reached across that boundary; on Linux a private /tmp namespace can
+    # make the same path mean something different inside the container.
+    with tempfile.TemporaryDirectory(
+        prefix="agent-check-", dir=_probe_temp_parent()
+    ) as workspace_raw:
         workspace = Path(workspace_raw)
         # The probe prompt is written to a file and mounted, mirroring a real
         # run. Passing it in argv would test a contract no run uses.
@@ -334,7 +342,7 @@ def smoke_test_agent(
         (run_config / "mcp-servers.json").write_text("{}", encoding="utf-8")
         try:
             created, out = _run(
-                ["wsl.exe", "-d", target, "--", "docker", "network", "create", network], 60
+                docker_cli.docker_argv("network", "create", network, distro=target), 60
             )
             if created != 0:
                 report.add(AgentCheck("container", "unknown", detail=f"创建网络失败：{out[:200]}"))
@@ -368,7 +376,7 @@ def smoke_test_agent(
             report.add(AgentCheck("container", "ok", detail="容器已启动"))
 
             wait_code, wait_out = _run(
-                ["wsl.exe", "-d", target, "--", "docker", "wait", container], timeout
+                docker_cli.docker_argv("wait", container, distro=target), timeout
             )
             # `docker wait` exits 0 when the *wait* succeeded; the container's own
             # exit code is what it prints. Reading the command's status as the
@@ -424,8 +432,8 @@ def smoke_test_agent(
             return report
         finally:
             for resource in (container, gateway):
-                _run(["wsl.exe", "-d", target, "--", "docker", "rm", "--force", resource], 60)
-            _run(["wsl.exe", "-d", target, "--", "docker", "network", "rm", network], 60)
+                _run(docker_cli.docker_argv("rm", "--force", resource, distro=target), 60)
+            _run(docker_cli.docker_argv("network", "rm", network, distro=target), 60)
 
 
 def _gateway_args(
@@ -433,7 +441,7 @@ def _gateway_args(
 ) -> list[str]:
     """The gateway stands in for the real upstream during a smoke run."""
     return [
-        "wsl.exe", "-d", distro, "--", "docker", "run", "--detach",
+        *docker_cli.docker_argv("run", "--detach", distro=distro),
         "--name", gateway, "--network", network, "--network-alias", "llm-gateway",
         "-e", f"UPSTREAM_BASE_URL={upstream['base_url']}",
         "-e", f"UPSTREAM_API_KEY={upstream['api_key']}",
@@ -472,7 +480,7 @@ def _agent_args(
     """
     declared_workdir = profile.workdir or "/workspace"
     args = [
-        "wsl.exe", "-d", distro, "--", "docker", "run", "--detach",
+        *docker_cli.docker_argv("run", "--detach", distro=distro),
         "--name", container, "--network", network,
         "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true",
         # A real run mounts the project snapshot at the profile's workdir. A
@@ -481,7 +489,7 @@ def _agent_args(
         # defect. An anonymous tmpfs gives it somewhere to live.
         "--tmpfs", f"{declared_workdir}:rw,size=64m",
         # Same mount point and variable a real run uses.
-        "--mount", f"type=bind,src={_wsl_path(prompt_dir)},dst=/run-config,readonly",
+        "--mount", f"type=bind,src={_host_path(prompt_dir)},dst=/run-config,readonly",
         "-e", f"EVAL_TASK_PROMPT_FILE={_PROMPT_FILE}",
         "-e", f"EVAL_GATEWAY_API_KEY={key}",
         "-e", "EVAL_GATEWAY_URL=http://llm-gateway:8080/v1",
@@ -532,19 +540,35 @@ def _render_probe_value(value: str, model: str) -> str:
     )
 
 
-def _wsl_path(path: Path) -> str:
-    """Convert an absolute Windows path to one WSL Docker can bind-mount.
+def _host_path(path: Path) -> str:
+    """A path the Docker daemon can bind-mount on this platform.
 
-    Docker runs inside WSL, so it cannot see `D:\\...`. The same conversion the
-    runtime applies, kept here rather than imported: this module deliberately
-    depends only on `images`, so a probe can run without the runtime loaded.
+    Delegates to the platform seam so the probe mounts exactly what a real run
+    would; the conversion is not this module's business and used to be a second
+    copy of it.
     """
-    resolved = path.resolve()
-    drive = resolved.drive
-    if drive:
-        relative = resolved.relative_to(resolved.anchor).as_posix()
-        return f"/mnt/{drive[0].lower()}/{relative}"
-    return resolved.as_posix()
+    return docker_cli.host_path(path)
+
+
+def _probe_temp_parent() -> str:
+    """Where a bind-mountable temporary probe directory may live.
+
+    Created on demand: the first probe on a machine has no cache directory yet,
+    and `dir=` on a missing parent fails rather than creating it.
+    """
+    root = docker_cli.shared_temp_root()
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        # Falling back keeps the probe runnable; it is only a mount root.
+        return tempfile.gettempdir()
+    return str(root)
+
+
+def _build_hint() -> str:
+    """The build command an operator on this platform should run."""
+    script = docker_cli.build_hint()
+    return f"pwsh -File {script}" if docker_cli.is_windows() else f"python {script}"
 
 
 def _parse_container_exit(wait_code: int, wait_out: str) -> int | None:
@@ -572,7 +596,9 @@ def _read_settled_logs(distro: str, container: str, *, attempts: int = 6) -> str
     """
     logs = ""
     for attempt in range(attempts):
-        _code, logs = _run(["wsl.exe", "-d", distro, "--", "docker", "logs", container], 60)
+        _code, logs = _run(
+            docker_cli.docker_argv("logs", container, distro=distro), 60
+        )
         if logs.strip():
             return logs
         if attempt < attempts - 1:
@@ -636,7 +662,7 @@ def diagnose(logs: str) -> str:
     if "econnrefused" in lowered or "connection refused" in lowered:
         return "容器连不上 gateway；确认本机 Docker/WSL 正常"
     if "manifest unknown" in lowered or "pull access" in lowered:
-        return "镜像不存在；先构建：pwsh -File tools/build-sandbox-images.ps1"
+        return f"镜像不存在；先构建：{docker_cli.build_hint()}"
     return "查看容器日志以定位原因"
 
 

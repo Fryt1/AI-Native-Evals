@@ -20,14 +20,14 @@ crash.
 
 from __future__ import annotations
 
-import os
 import subprocess
 from dataclasses import dataclass
+
+from . import docker_cli
 
 # A tag or digest never needs a network round trip; only a genuinely absent
 # image costs a pull attempt, and we never pull implicitly.
 _DEFAULT_INSPECT_TIMEOUT_SECONDS = 60
-_DEFAULT_WSL_DISTRO = "Ubuntu-20.04"
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,12 +47,12 @@ class ImageStatus:
 
 
 def wsl_distro(explicit: str | None = None) -> str:
-    """Resolve the WSL distro that hosts Docker, matching the runtime's default."""
-    return (
-        explicit
-        or os.environ.get("AI_NATIVE_EVALS_WSL_DISTRO")
-        or _DEFAULT_WSL_DISTRO
-    ).strip() or _DEFAULT_WSL_DISTRO
+    """The WSL distro that hosts Docker, matching the runtime's default.
+
+    On Linux and macOS there is no distro and the value is informational; the
+    command itself is built by `docker_cli`, which does not need one.
+    """
+    return docker_cli.resolve_distro(explicit)
 
 
 def inspect_image(
@@ -72,18 +72,14 @@ def inspect_image(
         return ImageStatus(reference=reference, present=None, error="empty image reference")
     try:
         completed = subprocess.run(
-            [
-                "wsl.exe",
-                "-d",
-                wsl_distro(distro),
-                "--",
-                "docker",
+            docker_cli.docker_argv(
                 "image",
                 "inspect",
                 "--format",
                 "{{.Id}}",
                 target,
-            ],
+                distro=wsl_distro(distro),
+            ),
             check=False,
             capture_output=True,
             text=True,
@@ -98,7 +94,7 @@ def inspect_image(
             error=f"docker image inspect timed out after {timeout:g}s",
         )
     except OSError as exc:
-        return ImageStatus(reference=target, present=None, error=f"could not run wsl.exe: {exc}")
+        return ImageStatus(reference=target, present=None, error=f"could not run docker: {exc}")
 
     output = (completed.stdout or "").strip()
     if completed.returncode == 0 and output:
@@ -180,10 +176,9 @@ def available_versions(
     target = wsl_distro(distro)
     try:
         completed = subprocess.run(
-            [
-                "wsl.exe", "-d", target, "--",
-                "docker", "images", name, "--format", "{{.Tag}}",
-            ],
+            docker_cli.docker_argv(
+                "images", name, "--format", "{{.Tag}}", distro=target
+            ),
             check=False,
             capture_output=True,
             text=True,

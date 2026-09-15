@@ -57,6 +57,13 @@ COPY --from=blender-mcp /opt/blender-mcp /opt/blender-mcp
 COPY --from=blender-mcp /opt/comfy-mcp /opt/comfy-mcp
 
 ARG CODEX_VERSION=0.153.4
+# Which `@openai/codex-<platform>` build to install. Codex's own launcher picks
+# its native package from `process.arch` at startup, so the architecture of this
+# image and the architecture of the package inside it must agree. Hard-coding
+# `linux-x64` meant an arm64 image received an x64 binary and `codex` died on
+# its first exec. The builder passes the matching value; the default keeps the
+# existing x64 build byte-for-byte identical.
+ARG CODEX_PLATFORM=linux-x64
 # Record the Agent version inside the image, so a run can be traced back to the
 # exact Codex it used without consulting the tag it happened to be pulled under.
 LABEL ai.native.agent="codex" \
@@ -67,8 +74,15 @@ LABEL ai.native.agent="codex" \
 COPY --from=node-runtime /usr/bin/git /usr/bin/git
 COPY --from=node-runtime /usr/lib/git-core /usr/lib/git-core
 COPY --from=node-runtime /usr/share/git-core /usr/share/git-core
-COPY --from=node-runtime /lib/x86_64-linux-gnu/libpcre2-8.so.0 /lib/x86_64-linux-gnu/libpcre2-8.so.0
-RUN git --version
+# `libpcre2-8.so.0` is deliberately NOT copied. It was, from a hard-coded
+# `/lib/x86_64-linux-gnu/` path, which is wrong for two reasons: the Python base
+# already ships the library (so the copy was never needed), and on arm64 that
+# path does not exist at all, so the build failed with
+# `COPY failed: stat lib/x86_64-linux-gnu/libpcre2-8.so.0: file does not exist`
+# before anything ran. `ldconfig -p` below fails the build loudly if a future
+# base image ever stops providing it, instead of leaving a `git` that cannot run.
+RUN ldconfig -p | grep -q 'libpcre2-8\.so\.0' \
+    && git --version
 
 RUN groupadd --gid 1000 node \
     && useradd --uid 1000 --gid 1000 --create-home --shell /bin/bash node

@@ -18,14 +18,15 @@ from uuid import uuid4
 
 from ..adapters.events import normalize_log_file
 from ..mcp import project_dsh_mcp_servers
+from . import docker_cli
 from .docker_runtime import (
     DockerRuntimeError,
     _container_security_args,
     _docker,
     _docker_raw,
     _gateway_key,
-    _linux_path,
     _mount,
+    _resolve_distro,
     _resolve_wsl_host_ip,
     _safe_name,
 )
@@ -125,11 +126,7 @@ def run_evaluator_agent(
     network = _safe_name(f"ai-native-eval-{resource_name}-eval")
     gateway_container = f"{network}-gateway"
     agent_container = f"{network}-agent"
-    distro = wsl_distro or str(
-        (run.get("sandbox") or {}).get(
-            "distro", os.environ.get("AI_NATIVE_EVALS_WSL_DISTRO", "Ubuntu-20.04")
-        )
-    )
+    distro = _resolve_distro(wsl_distro, (run.get("sandbox") or {}).get("distro"))
     sandbox = run.get("sandbox") if isinstance(run.get("sandbox"), dict) else {}
     selected_gateway_image = gateway_image or str(
         sandbox.get(
@@ -216,7 +213,7 @@ def run_evaluator_agent(
             "llm-gateway",
             *_container_security_args(sandbox),
             "--env-file",
-            _linux_path(env_file),
+            docker_cli.host_path(env_file),
             "--env",
             f"GATEWAY_API_KEY={_gateway_key(f'{run_id}-{safe_role}')}",
             "--env",
@@ -288,31 +285,31 @@ def run_evaluator_agent(
         agent_args.extend(
             [
                 "--mount",
-                f"type=bind,src={_linux_path(mcp_path)},dst=/run-config/mcp-servers.json,readonly",
+                f"type=bind,src={docker_cli.host_path(mcp_path)},dst=/run-config/mcp-servers.json,readonly",
                 "--mount",
-                f"type=bind,src={_linux_path(dsh_mcp_path)},dst=/run-config/dsh-mcp-servers.json,readonly",
+                f"type=bind,src={docker_cli.host_path(dsh_mcp_path)},dst=/run-config/dsh-mcp-servers.json,readonly",
                 "--mount",
-                f"type=bind,src={_linux_path(profile_path)},dst=/run-config/agent-profile.json,readonly",
+                f"type=bind,src={docker_cli.host_path(profile_path)},dst=/run-config/agent-profile.json,readonly",
             ]
         )
         if dsh_runner_path.is_file():
             agent_args.extend(
                 [
                     "--mount",
-                    f"type=bind,src={_linux_path(dsh_runner_path)},dst=/run-config/dsh-acp-runner.mjs,readonly",
+                    f"type=bind,src={docker_cli.host_path(dsh_runner_path)},dst=/run-config/dsh-acp-runner.mjs,readonly",
                 ]
             )
         if system_prompt_path.is_file():
             agent_args.extend(
                 [
                     "--mount",
-                    f"type=bind,src={_linux_path(system_prompt_path)},dst=/run-config/agent-system-prompt.txt,readonly",
+                    f"type=bind,src={docker_cli.host_path(system_prompt_path)},dst=/run-config/agent-system-prompt.txt,readonly",
                 ]
             )
         agent_args.extend(
             [
                 "--mount",
-                f"type=bind,src={_linux_path(role_trace)},dst=/workspace/trace",
+                f"type=bind,src={docker_cli.host_path(role_trace)},dst=/workspace/trace",
             ]
         )
         for source, target, readonly in resolved_mounts:
@@ -461,7 +458,7 @@ def _docker_wait(
     """Wait for a role container without allowing a hung Judge forever."""
     try:
         return subprocess.run(
-            ["wsl.exe", "-d", distro, "--", "docker", "wait", container],
+            docker_cli.docker_argv("wait", container, distro=distro),
             check=False,
             capture_output=True,
             text=True,
@@ -474,7 +471,7 @@ def _docker_wait(
             f"evaluator Agent exceeded timeout of {timeout_seconds} seconds"
         ) from exc
     except OSError as exc:
-        raise DockerRuntimeError(f"could not invoke WSL Docker wait: {exc}") from exc
+        raise DockerRuntimeError(f"could not invoke Docker wait: {exc}") from exc
 
 
 def _combined_output(result: subprocess.CompletedProcess[str]) -> str:

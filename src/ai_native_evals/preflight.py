@@ -27,6 +27,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .runs import docker_cli
+
 OK = "ok"
 MISSING = "missing"
 UNKNOWN = "unknown"
@@ -211,6 +213,20 @@ def check_console_dependencies(repo_root: Path) -> Check:
 
 
 def check_wsl() -> Check:
+    """Whether the platform Docker is reached through is present.
+
+    Windows needs WSL2; Linux and macOS run Docker natively, so there is no
+    second thing to check and the answer is not a finding. Reporting it missing
+    would mark an ordinary Linux or macOS host unready for a reason that does
+    not exist there.
+    """
+    if not docker_cli.is_windows():
+        return Check(
+            "wsl",
+            OK,
+            detail=f"not needed: {docker_cli.describe()}",
+            required=False,
+        )
     return _which(
         "wsl.exe",
         hint="Docker-backed runs need WSL2; only inline runs work without it",
@@ -218,14 +234,21 @@ def check_wsl() -> Check:
 
 
 def check_docker(distro: str | None = None) -> Check:
-    """Is Docker reachable through WSL, and which distro answers?
+    """Is Docker reachable, and which server answers?
 
-    Deliberately two probes. Asking the distro to run ``docker version`` cannot
-    separate "no such distro" from "daemon down", and matching Docker's error
-    text is not portable: the messages are localized, so a Chinese-locale host
-    answered "no such distro" and every English keyword missed. Listing the
-    distros first gives an answer that does not depend on prose.
+    Two probes on Windows, one elsewhere, and the difference is deliberate.
+    Inside WSL, asking the distro to run ``docker version`` cannot separate "no
+    such distro" from "daemon down", and matching Docker's error text is not
+    portable: the messages are localized, so a Chinese-locale host answered "no
+    such distro" and every English keyword missed. Listing the distros first
+    gives an answer that does not depend on prose.
+
+    A native daemon has no distro to get wrong, so the extra probe would only
+    add a way to misreport; there, ``docker version`` is the whole question.
     """
+    if not docker_cli.is_windows():
+        return _check_native_docker()
+
     if shutil.which("wsl.exe") is None:
         return Check(
             "docker",
@@ -233,17 +256,12 @@ def check_docker(distro: str | None = None) -> Check:
             detail="wsl.exe is not available, so Docker cannot be reached",
             hint="install WSL2 and Docker, or run with an inline sandbox profile",
         )
-    target = distro or os.environ.get("AI_NATIVE_EVALS_WSL_DISTRO", "Ubuntu-20.04")
+    target = docker_cli.resolve_distro(distro)
 
+    names = docker_cli.list_distros()
     listed = _run(["wsl.exe", "--list", "--quiet"], timeout=20)
     if listed is not None:
-        code, output = listed
-        # wsl.exe writes UTF-16LE, which arrives as interleaved NUL bytes.
-        names = [
-            line.strip().replace("\x00", "")
-            for line in output.replace("\x00", "").splitlines()
-        ]
-        names = [name for name in names if name]
+        code, _output = listed
         if code == 0 and names and target not in names:
             return Check(
                 "docker",
@@ -268,11 +286,46 @@ def check_docker(distro: str | None = None) -> Check:
     )
 
 
+def _check_native_docker() -> Check:
+    """Ask a native daemon for its server version, once."""
+    if shutil.which("docker") is None:
+        return Check(
+            "docker",
+            MISSING,
+            detail="docker is not on PATH",
+            hint="install Docker, or run with an inline sandbox profile",
+        )
+    result = _run(["docker", "version", "--format", "{{.Server.Version}}"])
+    if result is None:
+        return Check("docker", UNKNOWN, detail="docker probe could not be run")
+    code, output = result
+    if code == 0 and output.strip():
+        return Check(
+            "docker", OK, detail=f"{docker_cli.describe()}: {output.splitlines()[0].strip()}"
+        )
+    # A non-zero exit here is nearly always "daemon not running" rather than
+    # "docker is absent", and the two need different actions.
+    return Check(
+        "docker",
+        MISSING,
+        detail=f"docker daemon is not reachable (exit {code}): {_clean(output)[:160]}",
+        hint="start the Docker daemon",
+    )
+
+
 def _clean(value: str) -> str:
     """Strip NULs and control characters from WSL output, which is UTF-16LE."""
     readable = value.replace("\x00", "")
     kept = (c for c in readable if c.isprintable() or c == " ")
     return "".join(kept)
+
+
+def _build_hint() -> str:
+    """The build command an operator on this platform should actually run."""
+    script = docker_cli.build_hint()
+    if docker_cli.is_windows():
+        return f"run: pwsh -File {script}"
+    return f"run: python {script}"
 
 
 def check_images(spec: object | None, *, distro: str | None = None) -> Check:
@@ -300,7 +353,7 @@ def check_images(spec: object | None, *, distro: str | None = None) -> Check:
             "images",
             MISSING,
             detail=", ".join(s.reference for s in absent),
-            hint="run: pwsh -File tools/build-sandbox-images.ps1",
+            hint=_build_hint(),
         )
     if unknown:
         return Check(
@@ -373,7 +426,7 @@ def check_agent_images(repo_root: Path, *, distro: str | None = None) -> Check:
             "agent_images",
             MISSING,
             detail="; ".join(absent),
-            hint="run: pwsh -File tools/build-sandbox-images.ps1",
+            hint=_build_hint(),
         )
     if unknown:
         return Check(

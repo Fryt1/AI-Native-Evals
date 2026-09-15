@@ -17,18 +17,18 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from . import docker_cli
 from .lifecycle import load_manifest, update_manifest
 
 
 class DockerRuntimeError(RuntimeError):
-    """Raised when the WSL-backed Docker runtime cannot manage a run."""
+    """Raised when the Docker runtime cannot manage a run."""
 
 
 class DockerTimeoutError(DockerRuntimeError):
     """Raised when a Docker command exceeds its allotted time."""
 
 
-_DEFAULT_WSL_DISTRO = "Ubuntu-20.04"
 _DEFAULT_GATEWAY_IMAGE = "ai-native-llm-gateway:local"
 #: Where the run's Task prompt is mounted inside the container. The prompt text
 #: is never passed as a command argument; see `_agent_run_args`.
@@ -63,11 +63,9 @@ def start_docker_run(
     sandbox = _sandbox_metadata(run)
     run_id = str(run["run_id"])
     runtime = _runtime_metadata(run_id)
-    distro = wsl_distro or str(
-        sandbox.get(
-            "distro", os.environ.get("AI_NATIVE_EVALS_WSL_DISTRO", _DEFAULT_WSL_DISTRO)
-        )
-    )
+    # A profile's declared distro is this run's choice; the environment is only
+    # a fallback for a profile that names none.
+    distro = _resolve_distro(wsl_distro, sandbox.get("distro"))
     gateway_image = gateway_image or os.environ.get(
         "AI_NATIVE_EVALS_GATEWAY_IMAGE", str(sandbox.get("gateway_image", _DEFAULT_GATEWAY_IMAGE))
     )
@@ -160,9 +158,7 @@ def wait_docker_run(
     runtime = manifest.get("runtime")
     if not isinstance(runtime, dict) or not runtime.get("agent_container"):
         raise DockerRuntimeError("run has no Agent container")
-    distro = wsl_distro or runtime.get(
-        "wsl_distro", os.environ.get("AI_NATIVE_EVALS_WSL_DISTRO", _DEFAULT_WSL_DISTRO)
-    )
+    distro = _recorded_distro(runtime, wsl_distro)
     run = manifest.get("run")
     limit = timeout_seconds or _agent_timeout_seconds(run if isinstance(run, dict) else {})
 
@@ -247,9 +243,7 @@ def read_docker_logs(
     runtime = manifest.get("runtime")
     if not isinstance(runtime, dict) or not runtime.get("agent_container"):
         raise DockerRuntimeError("run has no Agent container")
-    distro = wsl_distro or runtime.get(
-        "wsl_distro", os.environ.get("AI_NATIVE_EVALS_WSL_DISTRO", _DEFAULT_WSL_DISTRO)
-    )
+    distro = _recorded_distro(runtime, wsl_distro)
     result = _docker_raw(
         str(distro),
         "logs",
@@ -326,9 +320,7 @@ def list_orphan_resources(
     reaches a terminal status before its evaluator containers have been cleaned
     up, so status alone would put a live evaluation in scope.
     """
-    distro = wsl_distro or os.environ.get(
-        "AI_NATIVE_EVALS_WSL_DISTRO", _DEFAULT_WSL_DISTRO
-    )
+    distro = _resolve_distro(wsl_distro)
     grace = reclaim_grace_seconds() if grace_seconds is None else grace_seconds
     now = time.time()
 
@@ -408,9 +400,7 @@ def reclaim_orphans(
     wsl_distro: str | None = None,
 ) -> dict[str, Any]:
     """Remove the orphaned containers and networks one at a time."""
-    distro = wsl_distro or os.environ.get(
-        "AI_NATIVE_EVALS_WSL_DISTRO", _DEFAULT_WSL_DISTRO
-    )
+    distro = _resolve_distro(wsl_distro)
     orphans = list_orphan_resources(runs_root, wsl_distro=distro)
     removed: list[str] = []
     errors: list[str] = []
@@ -443,9 +433,7 @@ def stop_docker_run(
     runtime = dict(runtime_value) if isinstance(runtime_value, dict) else _runtime_metadata(
         str(manifest["run"]["run_id"])
     )
-    distro = wsl_distro or runtime.get(
-        "wsl_distro", os.environ.get("AI_NATIVE_EVALS_WSL_DISTRO", _DEFAULT_WSL_DISTRO)
-    )
+    distro = _recorded_distro(runtime, wsl_distro)
     errors: list[str] = []
 
     for container_key in ("agent_container", "gateway_container"):
@@ -497,7 +485,7 @@ def _agent_run_args(
         runtime["network"],
         *_container_security_args(sandbox, agent=True, writable_paths=writable_paths),
         "--add-host",
-        f"host.docker.internal:{_resolve_wsl_host_ip(str(sandbox.get('distro', 'Ubuntu-20.04')))}",
+        f"host.docker.internal:{_resolve_wsl_host_ip(str(sandbox.get('distro') or ''))}",
         "--workdir",
         workdir,
         "--env",
@@ -743,38 +731,40 @@ def gateway_upstream_origin(env_file: Path) -> str | None:
     return origin
 
 
+def _resolve_distro(explicit: str | None = None, declared: object = None) -> str:
+    """The distro to *start* Docker resources with.
+
+    Precedence: an explicit argument, then the distro the run's sandbox profile
+    declared, then the operator's environment, then the default. Kept identical
+    to the resolution this replaced; it is a function now only so the seven
+    copies of it cannot drift apart.
+    """
+    for candidate in (explicit, declared):
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+    return docker_cli.resolve_distro()
+
+
+def _recorded_distro(runtime: dict[str, Any], explicit: str | None = None) -> str:
+    """The distro to *reach* an already-started run's resources with.
+
+    A run records the distro it was started in, and stopping or reading it must
+    use that recorded value rather than re-resolving: an operator who changes
+    ``AI_NATIVE_EVALS_WSL_DISTRO`` afterwards would otherwise address a different
+    distro than the containers actually live in, and cleanup would silently
+    report success while leaving them running.
+    """
+    if explicit and explicit.strip():
+        return explicit.strip()
+    recorded = runtime.get("wsl_distro")
+    if isinstance(recorded, str) and recorded.strip():
+        return recorded.strip()
+    return docker_cli.resolve_distro()
+
+
 def _resolve_wsl_host_ip(distro: str) -> str:
-    """Resolve the Windows host address reachable from a WSL Docker container."""
-    result = subprocess.run(
-        [
-            "wsl.exe",
-            "-d",
-            distro,
-            "--",
-            "sh",
-            "-lc",
-            "ip route | sed -n 's/^default via \\([^ ]*\\).*/\\1/p'",
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
-    candidate = result.stdout.strip().splitlines()[0] if result.stdout.strip() else ""
-    if candidate:
-        return candidate
-    # Older Docker Desktop configurations understand host-gateway directly.
-    return "host-gateway"
-
-
-def _docker(
-    distro: str, *args: str, timeout: int | None = _DEFAULT_DOCKER_TIMEOUT_SECONDS
-) -> str:
-    result = _docker_raw(distro, *args, timeout=timeout)
-    if result.returncode != 0:
-        raise DockerRuntimeError(_command_error(result))
-    return _combined_output(result).strip()
+    """The host address reachable from a container, on this platform."""
+    return docker_cli.host_gateway(distro)
 
 
 def _docker_raw(
@@ -782,7 +772,7 @@ def _docker_raw(
 ) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run(
-            ["wsl.exe", "-d", distro, "--", "docker", *args],
+            docker_cli.docker_argv(*args, distro=distro),
             check=False,
             capture_output=True,
             text=True,
@@ -795,7 +785,16 @@ def _docker_raw(
             f"docker {' '.join(args[:2])} exceeded {timeout}s"
         ) from exc
     except OSError as exc:
-        raise DockerRuntimeError(f"could not invoke WSL Docker: {exc}") from exc
+        raise DockerRuntimeError(f"could not invoke Docker: {exc}") from exc
+
+
+def _docker(
+    distro: str, *args: str, timeout: int | None = _DEFAULT_DOCKER_TIMEOUT_SECONDS
+) -> str:
+    result = _docker_raw(distro, *args, timeout=timeout)
+    if result.returncode != 0:
+        raise DockerRuntimeError(_command_error(result))
+    return _combined_output(result).strip()
 
 
 def _container_logs(distro: str, container: str) -> str:
@@ -821,13 +820,13 @@ def _best_effort_stop(distro: str, runtime: dict[str, str]) -> None:
 
 
 def _linux_path(path: Path) -> str:
-    """Convert an absolute Windows path to a path visible inside WSL Docker."""
-    resolved = path.resolve()
-    drive = resolved.drive
-    if drive:
-        relative = resolved.relative_to(resolved.anchor).as_posix()
-        return f"/mnt/{drive[0].lower()}/{relative}"
-    return resolved.as_posix()
+    """A host path as Docker must see it to bind-mount it.
+
+    The name is kept because callers and tests know it, but the platform
+    decision lives in `docker_cli`: on Windows this converts `D:\\x` to
+    `/mnt/d/x`, and on Linux/macOS it returns the path unchanged.
+    """
+    return docker_cli.host_path(path)
 
 
 def _utc_now() -> str:
