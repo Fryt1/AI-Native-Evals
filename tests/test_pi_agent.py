@@ -35,13 +35,19 @@ def test_the_build_tool_needs_no_knowledge_of_pi() -> None:
     Matched as whole words and paths rather than as a substring: `pi` occurs
     inside `PyPIIndex`, `$PID` and `copying`, and a test that trips on those
     proves nothing.
+
+    Both entry points are checked, because there are two: the PowerShell script
+    on Windows and the Python one on Linux/macOS. Guarding only the first would
+    leave the second free to grow the per-Agent switch this rule exists to
+    prevent.
     """
     import re
 
-    text = (REPO / "tools" / "build-sandbox-images.ps1").read_text(encoding="utf-8")
+    for script in ("build-sandbox-images.ps1", "build-sandbox-images.py"):
+        text = (REPO / "tools" / script).read_text(encoding="utf-8")
 
-    assert not re.search(r"\bpi\b", text), "the build tool names pi as a word"
-    assert "pi-agent" not in text, "the build tool names pi's Dockerfile"
+        assert not re.search(r"\bpi\b", text), f"{script} names pi as a word"
+        assert "pi-agent" not in text, f"{script} names pi's Dockerfile"
 
 
 def test_pi_declares_the_protocol_it_actually_speaks() -> None:

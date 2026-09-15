@@ -46,16 +46,25 @@ class BuildError(RuntimeError):
     """A build step failed; the message is what the operator needs to see."""
 
 
-def load_builds(agent_filter: list[str]) -> list[dict[str, object]]:
+def load_builds(
+    agent_filter: list[str], root: Path | None = None
+) -> list[dict[str, object]]:
     """Every Agent profile that declares how to build itself.
 
     Read through the shared profile loader, so an Agent added to
     ``profiles/agents/`` is buildable here without editing this script.
+
+    ``root`` is a parameter rather than the module global so the plan can be
+    computed for a directory other than this checkout -- which is what a test
+    needs in order to exercise a tree that is not the developer's own.
     """
     from ai_native_evals.agents.profile import load_agent_profiles
 
+    repo_root = REPO_ROOT if root is None else Path(root)
     builds: list[dict[str, object]] = []
-    for profile_id, profile in sorted(load_agent_profiles(REPO_ROOT / "profiles" / "agents").items()):
+    for profile_id, profile in sorted(
+        load_agent_profiles(repo_root / "profiles" / "agents").items()
+    ):
         build = profile.build if isinstance(profile.build, dict) else {}
         builds.append(
             {
@@ -71,7 +80,7 @@ def load_builds(agent_filter: list[str]) -> list[dict[str, object]]:
             }
         )
     if not builds:
-        raise BuildError("No Agent profiles found under profiles/agents")
+        raise BuildError(f"No Agent profiles found under {repo_root / 'profiles' / 'agents'}")
     if agent_filter:
         known = {str(item["id"]) for item in builds}
         unknown = [name for name in agent_filter if name not in known]

@@ -121,12 +121,29 @@ def test_the_build_script_names_no_agent() -> None:
     It used to hold a list: `-CodexVersion`, `-DshVersion`, `-IncludeDshRelease`
     and a hard-coded Dockerfile path each. Adding an Agent meant editing this
     script, which is what made it an enumeration rather than an abstraction.
-    """
-    text = (REPO / "tools" / "build-sandbox-images.ps1").read_text(encoding="utf-8")
 
-    for name in ("codex", "dsh", "example-cli"):
-        assert f"ai-native-{name}-agent" not in text, f"the build script names {name!r}"
-        assert f"docker/{name}-agent" not in text, f"the build script names {name!r}"
+    Both entry points are checked. The Python builder runs on Linux and macOS,
+    where the PowerShell one cannot; if only one of them were guarded, an Agent
+    name could be reintroduced through the unguarded one.
+    """
+    for script in ("build-sandbox-images.ps1", "build-sandbox-images.py"):
+        text = (REPO / "tools" / script).read_text(encoding="utf-8")
+        for name in ("codex", "dsh", "example-cli"):
+            assert f"ai-native-{name}-agent" not in text, f"{script} names {name!r}"
+            assert f"docker/{name}-agent" not in text, f"{script} names {name!r}"
+
+
+def test_every_build_entry_point_derives_its_plan_from_the_profiles() -> None:
+    """A cross-platform builder must read profiles, not carry its own list.
+
+    The PowerShell script once enumerated Agents through switches like
+    `-CodexVersion` and `-IncludeDshRelease`, which is what made it an
+    enumeration rather than an abstraction. The Python entry point is held to the
+    same rule, so it cannot reintroduce that shape on the other platform.
+    """
+    for script in ("build-sandbox-images.ps1", "build-sandbox-images.py"):
+        text = (REPO / "tools" / script).read_text(encoding="utf-8")
+        assert "load_agent_profiles" in text, script
 
 
 def test_the_build_script_derives_the_tag_from_the_profile() -> None:
@@ -153,11 +170,17 @@ def test_the_build_script_does_not_impose_a_base_image_on_every_agent() -> None:
 
 
 def test_the_build_script_no_longer_writes_a_versionless_tag() -> None:
-    """A leftover `:local` would recreate the overwriting problem."""
-    text = (REPO / "tools" / "build-sandbox-images.ps1").read_text(encoding="utf-8")
+    """A leftover `:local` would recreate the overwriting problem.
 
-    assert '"ai-native-codex-agent:local"' not in text
-    assert '"ai-native-dsh-agent:release"' not in text
+    Asserted against the *repository* rather than one script's quoting style: the
+    literal tag must not be spelled in either entry point, since a versionless
+    tag is what made two builds of different versions overwrite each other.
+    """
+    for script in ("build-sandbox-images.ps1", "build-sandbox-images.py"):
+        text = (REPO / "tools" / script).read_text(encoding="utf-8")
+
+        assert "ai-native-codex-agent:local" not in text, script
+        assert "ai-native-dsh-agent:release" not in text, script
 
 
 def test_the_images_carry_a_version_label() -> None:
@@ -180,8 +203,16 @@ def test_the_offline_scripts_derive_the_tag_rather_than_spelling_it() -> None:
 
 
 def _docker_images() -> set[str]:
+    """The images on this machine, reached the way this platform reaches Docker.
+
+    Built through the platform seam rather than with a literal `wsl.exe`: on
+    Linux and macOS there is no WSL, so the hardcoded form returned nothing and
+    the version check below silently skipped instead of running.
+    """
+    from ai_native_evals.runs import docker_cli
+
     result = subprocess.run(
-        ["wsl.exe", "-e", "docker", "images", "--format", "{{.Repository}}:{{.Tag}}"],
+        docker_cli.docker_argv("images", "--format", "{{.Repository}}:{{.Tag}}"),
         capture_output=True,
         text=True,
         check=False,
