@@ -63,6 +63,19 @@ def _manifest(run_dir: Path) -> dict[str, object]:
 
 
 def test_linux_path_converts_windows_drive() -> None:
+    """The drive translation is a Windows behaviour, so it is asserted on Windows.
+
+    On Linux and macOS the same function must leave a path alone -- there is no
+    WSL boundary to cross, and rewriting `/tmp/x` into `/mnt/...` would invent a
+    path Docker cannot mount. Both directions are the same seam, so both are
+    pinned here rather than only the one the development machine happened to
+    exercise.
+    """
+    from ai_native_evals.runs import docker_cli
+
+    if not docker_cli.is_windows():
+        assert _linux_path(Path("/tmp/some/dir")) == "/tmp/some/dir"
+        return
     # Any drive path works here; the conversion is what is under test.
     assert _linux_path(Path("D:/some/dir")) == "/mnt/d/some/dir"
 

@@ -160,7 +160,14 @@ def test_image_paths_tolerates_a_spec_without_sandbox() -> None:
 
 
 def test_reference_is_passed_to_docker_untouched(monkeypatch) -> None:
-    """The check must ask about the exact reference the run will use."""
+    """The check must ask about the exact reference the run will use.
+
+    The distro is only part of the command on Windows, where Docker is reached
+    through WSL. Asserting it unconditionally made this test fail on Linux and
+    macOS, where the correct command has no distro in it at all.
+    """
+    from ai_native_evals.runs import docker_cli
+
     seen: list[list[str]] = []
 
     def fake(args, **_kwargs):
@@ -172,7 +179,11 @@ def test_reference_is_passed_to_docker_untouched(monkeypatch) -> None:
 
     assert seen
     assert seen[0][-1] == "ai-native-dsh-agent:local"
-    assert "Ubuntu-20.04" in seen[0]
+    if docker_cli.is_windows():
+        assert "Ubuntu-20.04" in seen[0]
+    else:
+        assert seen[0][0] == "docker"
+        assert "wsl.exe" not in seen[0]
 
 
 def test_module_stays_importable_without_docker(monkeypatch) -> None:

@@ -26,6 +26,15 @@ from ai_native_evals.preflight import (
     check_pnpm,
     render_text,
 )
+from ai_native_evals.runs import docker_cli
+
+#: The WSL-specific assertions below describe Windows behaviour, where Docker is
+#: reached through a distro. On Linux and macOS there is no distro, so the same
+#: tests would be asserting something that does not exist there. They are marked
+#: rather than deleted, and the native path has its own tests beside them.
+windows_only = pytest.mark.skipif(
+    not docker_cli.is_windows(), reason="WSL distro selection is a Windows behaviour"
+)
 
 
 def _report(*checks: Check) -> PreflightReport:
@@ -110,6 +119,7 @@ def test_missing_pnpm_is_a_warning(monkeypatch) -> None:
     assert "corepack" in check.hint
 
 
+@windows_only
 def test_docker_reports_an_unknown_distro_without_parsing_its_error(monkeypatch) -> None:
     """Docker's messages are localized; a Chinese-locale host broke keyword matching.
 
@@ -131,6 +141,7 @@ def test_docker_reports_an_unknown_distro_without_parsing_its_error(monkeypatch)
     assert "Ubuntu-20.04" in check.detail
 
 
+@windows_only
 def test_docker_ok_reports_the_server_version(monkeypatch) -> None:
     monkeypatch.setattr(preflight.shutil, "which", lambda _name: "wsl.exe")
 
@@ -147,6 +158,7 @@ def test_docker_ok_reports_the_server_version(monkeypatch) -> None:
     assert "26.1.3" in check.detail
 
 
+@windows_only
 def test_docker_without_wsl_is_missing(monkeypatch) -> None:
     monkeypatch.setattr(preflight.shutil, "which", lambda _name: None)
 
@@ -156,6 +168,7 @@ def test_docker_without_wsl_is_missing(monkeypatch) -> None:
     assert check.required is True
 
 
+@windows_only
 def test_docker_unparseable_output_is_unknown(monkeypatch) -> None:
     monkeypatch.setattr(preflight.shutil, "which", lambda _name: "wsl.exe")
 
@@ -170,6 +183,60 @@ def test_docker_unparseable_output_is_unknown(monkeypatch) -> None:
 
     assert check.status in {MISSING, UNKNOWN}
     assert check.detail
+
+
+native_only = pytest.mark.skipif(
+    docker_cli.is_windows(), reason="the native daemon path is Linux/macOS only"
+)
+
+
+@native_only
+def test_docker_is_probed_directly_without_a_distro(monkeypatch) -> None:
+    """A native daemon needs one probe, and no distro may appear in it.
+
+    This is the counterpart to the WSL tests above: the platform fork is only
+    trustworthy if both branches are exercised, and CI runs on Linux.
+    """
+    monkeypatch.setattr(preflight.shutil, "which", lambda _name: "/usr/bin/docker")
+
+    seen: list[list[str]] = []
+
+    def fake_run(argv, **_kwargs):
+        seen.append(list(argv))
+        return 0, "26.1.3\n"
+
+    monkeypatch.setattr(preflight, "_run", fake_run)
+
+    check = check_docker()
+
+    assert check.status == OK
+    assert "26.1.3" in check.detail
+    assert seen == [["docker", "version", "--format", "{{.Server.Version}}"]]
+    assert all("wsl.exe" not in argv for argv in seen)
+
+
+@native_only
+def test_docker_daemon_down_is_missing_not_unknown(monkeypatch) -> None:
+    """`docker` present but unreachable is a fixable fault, not an unknown."""
+    monkeypatch.setattr(preflight.shutil, "which", lambda _name: "/usr/bin/docker")
+    monkeypatch.setattr(
+        preflight, "_run", lambda *a, **k: (1, "Cannot connect to the Docker daemon")
+    )
+
+    check = check_docker()
+
+    assert check.status == MISSING
+    assert check.required is True
+    assert "daemon" in check.hint
+
+
+@native_only
+def test_wsl_check_is_not_a_finding_off_windows() -> None:
+    """Linux and macOS have no WSL step, so it must not block readiness."""
+    check = preflight.check_wsl()
+
+    assert check.status == OK
+    assert check.required is False
 
 
 def test_console_dependencies_missing_points_at_the_install_command(tmp_path: Path) -> None:

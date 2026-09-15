@@ -1,5 +1,6 @@
 """Unit tests for the Codex process adapter."""
 
+import sys
 from pathlib import Path
 
 from ai_native_evals.adapters.codex import CodexAdapter, CodexConfig
@@ -7,7 +8,11 @@ from ai_native_evals.contracts import AgentLaunchSpec
 
 
 def test_build_command_uses_codex_exec_and_isolated_directory(tmp_path: Path) -> None:
-    adapter = CodexAdapter(CodexConfig(executable="python"))
+    # `sys.executable` rather than the literal "python": the adapter resolves the
+    # executable on PATH, and a bare `python` does not exist on macOS or on many
+    # Linux installs, so the test failed there for a reason that has nothing to
+    # do with command construction.
+    adapter = CodexAdapter(CodexConfig(executable=sys.executable))
     spec = AgentLaunchSpec(
         agent_id="codex",
         task_id="file-001",
