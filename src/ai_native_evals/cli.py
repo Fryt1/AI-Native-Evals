@@ -603,7 +603,7 @@ def _provider_models(args: argparse.Namespace) -> int:
 
 def _compare(args: argparse.Namespace) -> int:
     """Run one Task through multiple Agents with shared evaluation inputs."""
-    from .runs.compare import compare_task, render_comparison_markdown
+    from .experiments.compare import compare_task, render_comparison_markdown
 
     agents = tuple(value.strip() for value in args.agents.split(","))
     config_path = args.config.resolve() if args.config else None

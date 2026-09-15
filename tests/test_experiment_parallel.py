@@ -42,24 +42,19 @@ def _fake_spec(tmp_path: Path, **selectors) -> SimpleNamespace:
 
 
 def _install(monkeypatch, tmp_path: Path, *, resolve, decisions) -> None:
+    monkeypatch.setattr(experiment_runner.resolver, "resolve_run", resolve)
     monkeypatch.setattr(
-        experiment_runner,
-        "_resolver",
-        lambda: SimpleNamespace(resolve_run=resolve, EvalConfigError=ValueError),
+        experiment_runner.lifecycle,
+        "prepare_run",
+        lambda _root, spec, **_kwargs: spec.run_dir,
     )
     monkeypatch.setattr(
-        experiment_runner,
-        "_lifecycle",
-        lambda: SimpleNamespace(prepare_run=lambda _root, spec, **_kwargs: spec.run_dir),
+        experiment_runner.docker_runtime, "start_docker_run", lambda run_dir, _root: None
     )
     monkeypatch.setattr(
-        experiment_runner,
-        "_docker",
-        lambda: SimpleNamespace(
-            DockerRuntimeError=RuntimeError,
-            start_docker_run=lambda run_dir, _root: None,
-            wait_docker_run=lambda run_dir: {"status": "completed"},
-        ),
+        experiment_runner.docker_runtime,
+        "wait_docker_run",
+        lambda run_dir: {"status": "completed"},
     )
     lock = threading.Lock()
     queue = list(decisions)

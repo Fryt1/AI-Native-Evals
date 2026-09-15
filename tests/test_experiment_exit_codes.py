@@ -94,7 +94,7 @@ def test_compare_exits_2_on_overlapping_intervals(
 ) -> None:
     _stub_run(monkeypatch, separated=False, repeats=5)
     monkeypatch.setattr(
-        "ai_native_evals.runs.compare.render_comparison_markdown", lambda _p: "# ok\n"
+        "ai_native_evals.experiments.compare.render_comparison_markdown", lambda _p: "# ok\n"
     )
 
     def fake_compare(*_args, **_kwargs):  # type: ignore[no-untyped-def]
@@ -105,7 +105,7 @@ def test_compare_exits_2_on_overlapping_intervals(
             "discrimination": {"separated": False},
         }
 
-    monkeypatch.setattr("ai_native_evals.runs.compare.compare_task", fake_compare)
+    monkeypatch.setattr("ai_native_evals.experiments.compare.compare_task", fake_compare)
 
     assert cli.main(["compare", "demo", "--agents", "codex,dsh", "--runs", "5"]) == 2
     capsys.readouterr()

@@ -7,8 +7,9 @@ This repository is an evaluation suite built on the external `inspect-ai` packag
 ## Ownership
 
 - `tasks/<task-id>/` owns Task Bundle data: prompt, resources, TestPlan and optional Rubric.
-- `experiments/<id>.yaml` owns experiment *definitions* (what varies, what is frozen, how many repeats); `src/ai_native_evals/experiments/` owns loading, validation, the run matrix, and the statistics. Definitions are data and belong in git; do not add a flag per axis to `compare` instead.
-- `src/ai_native_evals/runs/compare.py` is the single-axis case of an experiment and must delegate to the experiment runner. It may not grow its own execution loop, statistics, or artifact shape.
+- `experiments/<id>.yaml` owns experiment *definitions* (what varies, what is frozen, how many repeats); `src/ai_native_evals/experiments/` owns loading, validation, the run matrix, the statistics, and `compare.py`. Definitions are data and belong in git; do not add a flag per axis to `compare` instead.
+- `src/ai_native_evals/experiments/compare.py` is the single-axis case of an experiment and must delegate to the experiment runner. It may not grow its own execution loop, statistics, or artifact shape.
+- The dependency between `experiments/` and `runs/` is one-way: `experiments/` uses `runs/` to execute a plan, and `runs/` must never import `experiments/`. `tests/test_package_direction.py` enforces this, including that `experiments/` does not defer its `runs/` imports into function bodies -- doing so is how the cycle was tolerated before, and it hides the problem until an ordinary import breaks the package.
 - `profiles/agents/` owns Agent launch profiles; `profiles/models/` owns model/provider choices.
 - `src/ai_native_evals/agents/` owns the stable AgentAdapter seam and registry.
 - `src/ai_native_evals/adapters/` owns Codex/DSH protocol translation and normalized Agent events.

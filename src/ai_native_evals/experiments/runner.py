@@ -17,32 +17,11 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from ..runs import docker_runtime, lifecycle, resolver
+from ..runs.docker_runtime import DockerRuntimeError
+from ..runs.resolver import EvalConfigError
 from .spec import Cell, ExperimentSpec
 from .stats import discrimination, summarize_attempts
-
-
-def _docker() -> Any:
-    """The Docker runtime, imported on use.
-
-    `runs/__init__` imports `runs.compare`, which delegates here, so a
-    module-level import of `runs.*` from this package closes the cycle. The rest
-    of the repository defers the same way for the same reason.
-    """
-    from ..runs import docker_runtime
-
-    return docker_runtime
-
-
-def _lifecycle() -> Any:
-    from ..runs import lifecycle
-
-    return lifecycle
-
-
-def _resolver() -> Any:
-    from ..runs import resolver
-
-    return resolver
 
 
 class ExperimentRunError(RuntimeError):
@@ -57,7 +36,7 @@ def _resolve_cell(repo_root: Path, spec: ExperimentSpec, cell: Cell, *, config_p
     attempts would overwrite each other's evidence instead of accumulating.
     """
     selectors = spec.selectors_for(cell)
-    return _resolver().resolve_run(
+    return resolver.resolve_run(
         repo_root,
         spec.task_id,
         config_path=config_path,
@@ -101,7 +80,6 @@ def _attempt(
     run id, so each gets its own workspace, network and container names.
     """
     from ..evaluation.runner import EvaluationError, evaluate_run
-    from ..runs.resolver import EvalConfigError
 
     record: dict[str, Any] = {
         "cell": cell.label,
@@ -122,20 +100,20 @@ def _attempt(
                 "run_id": run_spec.run_id,
             }
         )
-        run_dir = _lifecycle().prepare_run(
+        run_dir = lifecycle.prepare_run(
             repo_root,
             run_spec,
             game_engine_ref=spec.fixed.get("game_engine_ref"),
             dsh_ref=spec.fixed.get("dsh_ref"),
         )
-        _docker().start_docker_run(run_dir, repo_root)
-        manifest = _docker().wait_docker_run(run_dir)
+        docker_runtime.start_docker_run(run_dir, repo_root)
+        manifest = docker_runtime.wait_docker_run(run_dir)
         record["run_dir"] = str(run_dir)
         record["status"] = manifest.get("status")
         if evaluate and manifest.get("status") in {"completed", "failed"}:
             record["evaluation"] = evaluate_run(run_dir, repo_root=repo_root)
     except (
-        _docker().DockerRuntimeError,
+        DockerRuntimeError,
         EvalConfigError,
         EvaluationError,
         ExperimentRunError,
@@ -213,8 +191,6 @@ def run_experiment(
     the sandbox memory limit rather than CPU. The default stays 1: a caller who
     wants parallel load should ask for it explicitly.
     """
-    from ..runs.resolver import EvalConfigError
-
     repo_root = repo_root.resolve()
     cells = spec.cells
     if not cells:

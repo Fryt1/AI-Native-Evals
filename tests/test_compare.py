@@ -1,8 +1,8 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+from ai_native_evals.experiments import compare
 from ai_native_evals.experiments import runner as experiment_runner
-from ai_native_evals.runs import compare
 
 
 def _fake_spec(tmp_path: Path, agent: str, task_id: str = "task") -> SimpleNamespace:
@@ -27,30 +27,29 @@ def _fake_spec(tmp_path: Path, agent: str, task_id: str = "task") -> SimpleNames
 
 
 def _install_fakes(monkeypatch, tmp_path: Path, *, resolve, start=None, wait=None) -> None:
-    """Wire the runner's lazy runtime seams to fakes.
+    """Wire the runner's runtime seams to fakes.
 
-    The runner imports `runs.*` on use to avoid a circular import, so the seams
-    are the accessors rather than the names they return.
+    The runner holds module references (`resolver`, `lifecycle`, `docker_runtime`)
+    rather than importing the functions by name, so a fake replaces the attribute
+    on those modules. It used to go through `_resolver()`/`_lifecycle()`/
+    `_docker()` accessors that existed only to defer a circular import; the cycle
+    is gone, and the seam is now the plain module.
     """
+    monkeypatch.setattr(experiment_runner.resolver, "resolve_run", resolve)
     monkeypatch.setattr(
-        experiment_runner,
-        "_resolver",
-        lambda: SimpleNamespace(resolve_run=resolve, EvalConfigError=ValueError),
+        experiment_runner.lifecycle,
+        "prepare_run",
+        lambda _root, spec, **_kwargs: spec.run_dir,
     )
     monkeypatch.setattr(
-        experiment_runner,
-        "_lifecycle",
-        lambda: SimpleNamespace(prepare_run=lambda _root, spec, **_kwargs: spec.run_dir),
+        experiment_runner.docker_runtime,
+        "start_docker_run",
+        start or (lambda run_dir, _root: None),
     )
     monkeypatch.setattr(
-        experiment_runner,
-        "_docker",
-        lambda: SimpleNamespace(
-            DockerRuntimeError=RuntimeError,
-            start_docker_run=start or (lambda run_dir, _root: None),
-            wait_docker_run=wait
-            or (lambda run_dir: {"status": "completed", "run": {"run_id": run_dir.name}}),
-        ),
+        experiment_runner.docker_runtime,
+        "wait_docker_run",
+        wait or (lambda run_dir: {"status": "completed", "run": {"run_id": run_dir.name}}),
     )
 
 

@@ -20,12 +20,12 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from ..experiments.runner import (  # noqa: F401 - re-exported for callers
-    ExperimentRunError,
+from .runner import (
+    ExperimentRunError,  # noqa: F401 - re-exported for callers
     render_experiment_markdown,
     run_experiment,
 )
-from ..experiments.spec import ExperimentSpec
+from .spec import ExperimentSpec
 
 
 class ComparisonError(RuntimeError):

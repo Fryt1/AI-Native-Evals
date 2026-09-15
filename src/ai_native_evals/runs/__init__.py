@@ -1,7 +1,11 @@
-"""Run lifecycle exports."""
+"""Run lifecycle exports.
+
+Deliberately does not export `compare`: a comparison is an experiment, and it
+lives in `experiments/` so the dependency runs one way -- `experiments/` uses
+`runs/` to execute a plan, and `runs/` knows nothing about experiments.
+"""
 
 from .agent_sandbox import EvaluatorAgentResult, default_readonly_mounts, run_evaluator_agent
-from .compare import ComparisonError, compare_task, render_comparison_markdown
 from .docker_runtime import (
     DockerRuntimeError,
     list_orphan_resources,
@@ -23,14 +27,12 @@ from .resolver import EvalConfigError, load_config, resolve_run
 from .spec import RunSpec
 
 __all__ = [
-    "ComparisonError",
     "DockerRuntimeError",
     "EvaluatorAgentResult",
     "EvalConfigError",
     "RunLifecycleError",
     "RunSpec",
     "cleanup_run",
-    "compare_task",
     "default_readonly_mounts",
     "list_orphan_resources",
     "load_config",
@@ -39,7 +41,6 @@ __all__ = [
     "read_docker_logs",
     "reclaim_orphans",
     "resolve_run",
-    "render_comparison_markdown",
     "run_evaluator_agent",
     "set_status",
     "start_docker_run",
