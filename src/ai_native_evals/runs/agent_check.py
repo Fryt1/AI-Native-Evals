@@ -567,8 +567,7 @@ def _probe_temp_parent() -> str:
 
 def _build_hint() -> str:
     """The build command an operator on this platform should run."""
-    script = docker_cli.build_hint()
-    return f"pwsh -File {script}" if docker_cli.is_windows() else f"python {script}"
+    return docker_cli.build_command()
 
 
 def _parse_container_exit(wait_code: int, wait_out: str) -> int | None:

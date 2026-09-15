@@ -28,6 +28,7 @@ from ..providers import (
     validate_model_available,
 )
 from ..tasks.bundles import TaskBundleError, load_task_bundle
+from . import docker_cli
 from .spec import RunSpec
 
 
@@ -492,7 +493,7 @@ def _require_run_images(spec: RunSpec) -> None:
     raise EvalConfigError(
         "the following Docker images do not exist on this machine: "
         + detail
-        + ". Build them with: pwsh -File tools/build-sandbox-images.ps1"
+        + f". Build them with: {docker_cli.build_command()}"
     )
 
 

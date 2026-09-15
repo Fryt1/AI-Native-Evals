@@ -258,17 +258,17 @@ def check_docker(distro: str | None = None) -> Check:
         )
     target = docker_cli.resolve_distro(distro)
 
+    # One probe for the distro list, through the seam. Asking twice -- once here
+    # and once inside the seam -- was a redundant round trip that could also
+    # disagree with itself between the two calls.
     names = docker_cli.list_distros()
-    listed = _run(["wsl.exe", "--list", "--quiet"], timeout=20)
-    if listed is not None:
-        code, _output = listed
-        if code == 0 and names and target not in names:
-            return Check(
-                "docker",
-                MISSING,
-                detail=f"no WSL distro named {target!r}; available: {', '.join(names)}",
-                hint="set AI_NATIVE_EVALS_WSL_DISTRO to one of the distros above",
-            )
+    if names and target not in names:
+        return Check(
+            "docker",
+            MISSING,
+            detail=f"no WSL distro named {target!r}; available: {', '.join(names)}",
+            hint="set AI_NATIVE_EVALS_WSL_DISTRO to one of the distros above",
+        )
 
     result = _run(
         ["wsl.exe", "-d", target, "--", "docker", "version", "--format", "{{.Server.Version}}"]
@@ -322,10 +322,7 @@ def _clean(value: str) -> str:
 
 def _build_hint() -> str:
     """The build command an operator on this platform should actually run."""
-    script = docker_cli.build_hint()
-    if docker_cli.is_windows():
-        return f"run: pwsh -File {script}"
-    return f"run: python {script}"
+    return f"run: {docker_cli.build_command()}"
 
 
 def check_images(spec: object | None, *, distro: str | None = None) -> Check:
