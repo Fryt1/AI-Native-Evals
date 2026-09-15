@@ -5,11 +5,17 @@ places, connected by convention rather than by a declared relationship:
 
 | What | Where | Who knows it |
 | --- | --- | --- |
-| How to build its image | `tools/build-sandbox-images.ps1` | a PowerShell switch per Agent |
+| How to build its image | `tools/build-sandbox-images.ps1` (Windows) / `tools/build-sandbox-images.py` (Linux, macOS) | the profile's `build` block |
 | Where its image lives | `profiles/agents/<id>.yaml` `image` | the profile |
 | How to start it | the same profile, `entrypoint` / `command` | the profile |
 | How to talk to it | the same profile, `adapter` + `protocol` | the profile, and `adapters/` |
 | How to read its log | the same profile, `adapter` | `adapters/events.py` |
+
+The two build entry points are the same procedure on two platforms, not two
+tools: both read `profiles/agents/*.yaml` through the shared loader, so adding an
+Agent means adding a profile and nothing else. The PowerShell one reaches Docker
+through `wsl.exe`; the Python one talks to a native daemon, because on Linux and
+macOS — where CI runs — there is no WSL to go through.
 
 Adding an Agent meant editing a build script that enumerated Agents by name,
 adding a profile, and — when the protocol is new — writing an adapter. The

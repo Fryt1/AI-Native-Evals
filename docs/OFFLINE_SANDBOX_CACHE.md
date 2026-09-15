@@ -71,9 +71,15 @@ Docker daemon.
 ## Build completely offline
 
 ```powershell
+# Windows
 pwsh -NoProfile -File .\tools\build-sandbox-images.ps1 `
   -Distro Ubuntu-20.04 `
   -Offline
+```
+
+```bash
+# Linux / macOS
+python tools/build-sandbox-images.py --offline
 ```
 
 The offline build loads the Docker archive first and then uses
@@ -87,6 +93,12 @@ network is available:
 ```powershell
 .\tools\eval.ps1 build -Agent dsh-release -UseMirror
 ```
+
+One asymmetry to know about: `--offline` loads and builds on every platform, but
+the *cache verification* step (`verify-cache.ps1`) is PowerShell-only, so the
+Python entry point prints that the check did not run instead of implying it
+passed. The images are still loaded either way; only the hash-and-presence
+verification is skipped.
 
 ## What is deliberately not cached in Git
 

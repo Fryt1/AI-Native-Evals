@@ -217,13 +217,15 @@ runner 完成握手并驱动一个回合，见 `docker/dsh-agent/acp-runner.mjs`
 ## 不用改的东西
 
 ```
-tools/build-sandbox-images.ps1      构建工具从 profile 读，不认识任何具体 Agent
+tools/build-sandbox-images.ps1      构建工具从 profile 读，不认识任何具体 Agent（Windows）
+tools/build-sandbox-images.py       同上，Linux/macOS 入口
 src/ai_native_evals/runs/*.py       运行器只看 profile 的 entrypoint / environment
 src/ai_native_evals_console/*.py    控制台是投影，读 registry
 ```
 
 `tests/test_pi_agent.py` 里有几条测试专门锁住这一点——构建工具里出现某个 Agent 的名字
-就会失败。
+就会失败。`tests/test_agent_versions.py` 把这条规则同时套在两个入口上：只锁
+`.ps1` 的话，Agent 名字可以从没上锁的 Python 入口加回去。
 
 ---
 
