@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from ai_native_evals_console.read_models import _comparison_fingerprint
 
 
@@ -69,7 +71,52 @@ def test_a_varying_axis_does_not_hide_a_real_difference() -> None:
     )
 
 
-def test_switching_only_the_agent_keeps_the_fingerprint() -> None:
+def _agent_repo(tmp_path: Path) -> Path:
+    """A minimal repository holding two Agent profiles, and nothing else.
+
+    Built here rather than pointed at the checkout on purpose: resolving against
+    the real repository requires `config/.env.local`, which is gitignored. A test
+    that needs a developer's credentials passes locally and fails on a fresh
+    clone -- which is exactly what happened when CI was first added.
+    """
+    (tmp_path / "config").mkdir(parents=True)
+    (tmp_path / "config" / "eval.yaml").write_text(
+        "version: 1\n"
+        "task_roots: [tasks]\n"
+        "profile_roots:\n"
+        "  agents: profiles/agents\n"
+        "  models: profiles/models\n"
+        "  mcp: profiles/mcp\n"
+        "paths:\n"
+        "  runs_root: EvalRuns\n"
+        "defaults:\n"
+        "  agent: codex\n"
+        "  model_profile: test-model\n"
+        "  mcp_profile: none\n",
+        encoding="utf-8",
+    )
+    profiles = {
+        "profiles/agents/codex.yaml": "id: codex\nadapter: codex\nimage: codex-image\n",
+        "profiles/agents/dsh-release.yaml": (
+            "id: dsh-release\nadapter: dsh-acp\nprotocol: acp\nimage: dsh-image\n"
+        ),
+        "profiles/models/test-model.yaml": "id: test-model\nmodel: test/model\n",
+        "profiles/mcp/none.yaml": "id: none\nservers: {}\n",
+    }
+    for relative, body in profiles.items():
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body, encoding="utf-8")
+    task = tmp_path / "tasks" / "demo"
+    task.mkdir(parents=True)
+    (task / "task.yaml").write_text(
+        "id: demo\nversion: 1\nprompt_file: prompt.md\nresources: []\n", encoding="utf-8"
+    )
+    (task / "prompt.md").write_text("Do the thing.", encoding="utf-8")
+    return tmp_path
+
+
+def test_switching_only_the_agent_keeps_the_fingerprint(tmp_path: Path) -> None:
     """Comparing two Agents must not be reported as an unfair comparison.
 
     The fingerprint deliberately omits `agent`: comparing Agents is the point of
@@ -81,14 +128,12 @@ def test_switching_only_the_agent_keeps_the_fingerprint() -> None:
     This drives the real resolver, so the assertion is about what a run actually
     records rather than about a hand-written manifest.
     """
-    from pathlib import Path
-
     from ai_native_evals.runs import resolve_run
 
-    repo_root = Path(__file__).parents[1]
+    repo_root = _agent_repo(tmp_path)
     fingerprints = {
         agent: _comparison_fingerprint(
-            {"run": resolve_run(repo_root, "codex-file-smoke", agent=agent).to_dict()}
+            {"run": resolve_run(repo_root, "demo", agent=agent).to_dict()}
         )
         for agent in ("codex", "dsh-release")
     }

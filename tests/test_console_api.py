@@ -423,36 +423,121 @@ def test_evaluation_modules_do_not_depend_on_console() -> None:
     assert not offenders, f"evaluation modules import the Console: {offenders}"
 
 
-def test_run_plan_resolves_existing_selectors_without_creating_a_run() -> None:
-    repo_root = Path(__file__).parents[1]
-    client = TestClient(create_app(repo_root=repo_root, runs_root=repo_root / ".." / "EvalRuns"))
+def _runnable_repo(tmp_path: Path) -> Path:
+    """A minimal repository the Console can resolve a run plan against.
+
+    Built here rather than pointed at the checkout, because resolving against the
+    real repository requires a configured provider -- and the credential file is
+    gitignored. A test that depends on it passes on a developer's machine and
+    fails on a fresh clone, which is precisely what happened the first time CI
+    ran: two of these tests had never actually been runnable anywhere but locally.
+
+    The model profile states the route directly, so no provider profile and no
+    credentials are involved.
+    """
+    config = tmp_path / "config"
+    (config / "rubrics").mkdir(parents=True)
+    (config / "eval.yaml").write_text(
+        "version: 1\n"
+        "task_roots: [tasks]\n"
+        "profile_roots:\n"
+        "  agents: profiles/agents\n"
+        "  models: profiles/models\n"
+        "  mcp: profiles/mcp\n"
+        "  sandboxes: profiles/sandboxes\n"
+        "paths:\n"
+        "  runs_root: EvalRuns\n"
+        "defaults:\n"
+        "  agent: codex\n"
+        "  model_profile: local-model\n"
+        "  mcp_profile: none\n"
+        "  sandbox_profile: local-sandbox\n",
+        encoding="utf-8",
+    )
+    files = {
+        "profiles/agents/codex.yaml": "id: codex\nadapter: codex\nimage: codex-image\n",
+        "profiles/models/local-model.yaml": (
+            "id: local-model\nmodel: test/model\nprotocol: responses\n"
+        ),
+        "profiles/mcp/none.yaml": "id: none\nservers: {}\n",
+        "profiles/sandboxes/local-sandbox.yaml": "id: local-sandbox\n",
+        "tasks/demo/task.yaml": (
+            "id: demo\n"
+            "version: 1\n"
+            "prompt_file: prompt.md\n"
+            "resources: []\n"
+            "test_plan:\n"
+            "  version: 1\n"
+            "  checks:\n"
+            "    - id: exists\n"
+            "      phase: outcome\n"
+            "      evaluator: script.file_exists.v1\n"
+            "      input:\n"
+            "        path: /workspace/output/result.txt\n"
+        ),
+        "tasks/demo/prompt.md": "Create the result file.",
+    }
+    for relative, body in files.items():
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body, encoding="utf-8")
+    return tmp_path
+
+
+def _no_missing_images(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Report every image as present, without asking Docker.
+
+    Plan resolution deliberately checks that the run's images exist, because the
+    Console's only write path ends in real containers. That makes a *successful*
+    plan-resolution test depend on images being built on the machine, which a CI
+    runner does not have. The check itself is covered where it belongs; here the
+    subject is what a resolved plan contains, so the Docker question is stubbed
+    rather than the whole resolution skipped.
+    """
+    from ai_native_evals.runs import images
+
+    monkeypatch.setattr(images, "missing_images", lambda _paths: [])
+
+
+def test_run_plan_resolves_existing_selectors_without_creating_a_run(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _no_missing_images(monkeypatch)
+    repo_root = _runnable_repo(tmp_path)
+    client = TestClient(create_app(repo_root=repo_root, runs_root=tmp_path / "EvalRuns"))
     response = client.post(
         "/api/v1/run-plans",
         json={
-            "task_id": "codex-file-smoke",
+            "task_id": "demo",
             "agent": "codex",
-            "model_profile": "sub2api-deepseek",
+            "model_profile": "local-model",
             "mcp_profile": "none",
-            "sandbox_profile": "docker-default",
+            "sandbox_profile": "local-sandbox",
         },
     )
     assert response.status_code == 200
     data = response.json()
     assert data["plan_id"].startswith("plan-")
-    assert data["run_id"].startswith("codex-file-smoke-")
+    assert data["run_id"].startswith("demo-")
     assert data["resolved"]["agent"] == "codex"
-    assert data["resolved"]["model"] == "deepseek/deepseek-v4.1-flash"
-    assert data["resolved"]["sandbox_profile"] == "docker-default"
+    assert data["resolved"]["model"] == "test/model"
+    assert data["resolved"]["sandbox_profile"] == "local-sandbox"
     assert data["checks"]
-    assert "D:\\work\\AI-Native\\EvalRuns" not in response.text
+    # No host path may reach the browser, whatever machine this runs on.
+    assert str(tmp_path) not in response.text
+    # A plan is a preview: resolving one must not create a run directory. The
+    # runs root itself may exist, because the Console's index lives inside it.
+    runs_root = tmp_path / "EvalRuns"
+    created = [p for p in runs_root.iterdir()] if runs_root.is_dir() else []
+    assert not [p for p in created if p.name != ".console"], "a plan must not create a run"
 
 
-def test_run_plan_rejects_unknown_profile_before_execution() -> None:
-    repo_root = Path(__file__).parents[1]
-    client = TestClient(create_app(repo_root=repo_root, runs_root=repo_root / ".." / "EvalRuns"))
+def test_run_plan_rejects_unknown_profile_before_execution(tmp_path: Path) -> None:
+    repo_root = _runnable_repo(tmp_path)
+    client = TestClient(create_app(repo_root=repo_root, runs_root=tmp_path / "EvalRuns"))
     response = client.post(
         "/api/v1/run-plans",
-        json={"task_id": "codex-file-smoke", "agent": "not-a-real-agent"},
+        json={"task_id": "demo", "agent": "not-a-real-agent"},
     )
     assert response.status_code == 422
     assert "unknown agent profile" in response.json()["detail"]
