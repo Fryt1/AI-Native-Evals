@@ -88,3 +88,6 @@ cache/python/*/wheels/*
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+# One-off architecture probes; not repository content.
+.arch-probe/
