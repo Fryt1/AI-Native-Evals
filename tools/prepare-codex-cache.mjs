@@ -6,7 +6,9 @@ for (let i = 2; i < process.argv.length; i += 2) {
   const key = process.argv[i];
   const value = process.argv[i + 1];
   if (!key?.startsWith("--") || value === undefined) {
-    throw new Error("usage: prepare-codex-cache.mjs --version VERSION --registry URL --output-dir DIR");
+    throw new Error(
+      "usage: prepare-codex-cache.mjs --version VERSION --registry URL --output-dir DIR [--platform linux-x64|linux-arm64]",
+    );
   }
   args.set(key.slice(2), value);
 }
@@ -14,10 +16,18 @@ for (let i = 2; i < process.argv.length; i += 2) {
 const version = args.get("version") || "0.153.4";
 const registry = (args.get("registry") || "https://registry.npmmirror.com").replace(/\/+$/, "");
 const outputDir = path.resolve(args.get("output-dir") || "cache/codex");
+// Which native Codex package to cache. Codex's launcher selects its package from
+// `process.arch`, so the image must ship the build matching its own
+// architecture. `linux-x64` stays the default, so the existing x64 flow is
+// unchanged; an arm64 image is built by naming `linux-arm64` here.
+const platform = args.get("platform") || "linux-x64";
+if (!/^linux-(x64|arm64)$/.test(platform)) {
+  throw new Error(`unsupported --platform ${platform}; expected linux-x64 or linux-arm64`);
+}
 const mainUrl = `${registry}/@openai/codex/-/codex-${version}.tgz`;
-const linuxUrl = `${registry}/@openai/codex/-/codex-${version}-linux-x64.tgz`;
+const linuxUrl = `${registry}/@openai/codex/-/codex-${version}-${platform}.tgz`;
 const mainFile = path.join(outputDir, "openai-codex.tgz");
-const linuxFile = path.join(outputDir, "codex-linux-x64.tgz");
+const linuxFile = path.join(outputDir, `codex-${platform}.tgz`);
 const versionFile = path.join(outputDir, "VERSION");
 
 await fs.mkdir(outputDir, { recursive: true });

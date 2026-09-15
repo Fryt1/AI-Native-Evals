@@ -14,7 +14,9 @@
 !vendor/blender-mcp/SOURCE.json
 !cache/codex/
 !cache/codex/openai-codex.tgz
-!cache/codex/codex-linux-x64.tgz
+# Both architectures' Codex packages, so one context can serve an amd64 or an
+# arm64 build; the Dockerfile COPYs only the one matching CODEX_PLATFORM.
+!cache/codex/codex-linux-*.tgz
 !cache/codex/VERSION
 !cache/python/
 !cache/python/blender-mcp/

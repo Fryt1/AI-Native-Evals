@@ -98,21 +98,27 @@ ENV BLENDER_MCP_HOST=host.docker.internal
 ENV BLENDER_MCP_PORT=9876
 
 COPY cache/codex/openai-codex.tgz /tmp/openai-codex.tgz
-COPY cache/codex/codex-linux-x64.tgz /tmp/codex-linux-x64.tgz
+# The platform tarball is named by the ARG, so the cache preparation and the
+# image agree on which one is required. The glob keeps a single-platform cache
+# working when the other architecture's tarball is not present.
+COPY cache/codex/codex-linux-*.tgz /tmp/codex-platform/
 
 USER root
-RUN mkdir -p /usr/local/lib/node_modules/@openai/codex \
+RUN set -eux; \
+    target="/usr/local/lib/node_modules/@openai/codex-${CODEX_PLATFORM}"; \
+    tarball="$(ls /tmp/codex-platform/codex-${CODEX_PLATFORM}.tgz)"; \
+    mkdir -p /usr/local/lib/node_modules/@openai/codex \
     && tar -xzf /tmp/openai-codex.tgz \
        -C /usr/local/lib/node_modules/@openai/codex \
        --strip-components=1 \
-    && mkdir -p /usr/local/lib/node_modules/@openai/codex-linux-x64 \
-    && tar -xzf /tmp/codex-linux-x64.tgz \
-       -C /usr/local/lib/node_modules/@openai/codex-linux-x64 \
+    && mkdir -p "$target" \
+    && tar -xzf "$tarball" \
+       -C "$target" \
        --strip-components=1 \
     && ln -sf ../lib/node_modules/@openai/codex/bin/codex.js /usr/local/bin/codex \
     && mkdir -p /opt/codex-home /workspace \
     && chown -R node:node /opt/codex-home /workspace /opt/blender-mcp \
-    && rm -f /tmp/openai-codex.tgz /tmp/codex-linux-x64.tgz
+    && rm -rf /tmp/openai-codex.tgz /tmp/codex-platform
 
 COPY docker/codex-agent/entrypoint.sh /usr/local/bin/ai-native-codex-entrypoint
 COPY docker/codex-agent/render_codex_config.mjs /usr/local/lib/ai-native/render_codex_config.mjs
