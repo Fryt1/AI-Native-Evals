@@ -126,6 +126,40 @@ def test_doctor_reports_a_wired_repository(
     assert code == 0
 
 
+def test_doctor_checks_only_the_repository(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`doctor` must not assert facts about the machine it runs on.
+
+    It used to require `wsl.exe`, which is a host fact that `preflight` already
+    owns and checks properly. The effect was that doctor failed on any machine
+    without WSL -- CI included -- while reporting nothing preflight does not
+    report better. The two commands are documented as complementary; this keeps
+    them that way.
+    """
+    _code, out = _run(capsys, "doctor")
+    checks = json.loads(out)["checks"]
+
+    assert "wsl" not in checks
+    # The repository facts are still there, so the check did not simply shrink.
+    assert {"config", "tasks", "agents", "models"} <= set(checks)
+
+
+def test_preflight_still_owns_the_machine_facts() -> None:
+    """Removing the WSL check from `doctor` must not remove it entirely."""
+    from ai_native_evals import preflight
+
+    names = {
+        check.name
+        for check in (
+            preflight.check_wsl(),
+            preflight.check_python(),
+            preflight.check_uv(),
+        )
+    }
+    assert any(name.startswith("wsl") for name in names), names
+
+
 def test_profile_roots_follow_the_configuration(
     repo: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

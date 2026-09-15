@@ -6,7 +6,6 @@ import argparse
 import json
 import os
 import re
-import shutil
 import sys
 from collections.abc import Sequence
 from dataclasses import replace
@@ -835,6 +834,15 @@ def _console(args: argparse.Namespace) -> int:
 
 
 def _doctor(_args: argparse.Namespace) -> int:
+    """Check the repository's own wiring, and nothing about this machine.
+
+    `preflight` owns machine facts -- toolchain, Docker, WSL, credentials -- and
+    already checks every one of them. This command used to also assert that
+    `wsl.exe` exists, which is a fact about the host, not about the repository:
+    it made `doctor` fail on any machine without WSL (including CI) while saying
+    nothing that `preflight` does not say better. The two commands are documented
+    as complementary, so they are kept that way.
+    """
     repo_root = _repo_root()
     checks: dict[str, object] = {}
     try:
@@ -849,7 +857,6 @@ def _doctor(_args: argparse.Namespace) -> int:
         checks["agents"] = {"ok": bool(agents), "ids": sorted(agents)}
         checks["models"] = {"ok": bool(models), "ids": sorted(models)}
         checks["inspect_ai"] = {"ok": True}
-        checks["wsl"] = {"ok": shutil.which("wsl.exe") is not None}
     except (EvalConfigError, OSError, ValueError) as exc:
         checks["error"] = str(exc)
     ok = all(value.get("ok", False) for value in checks.values() if isinstance(value, dict))

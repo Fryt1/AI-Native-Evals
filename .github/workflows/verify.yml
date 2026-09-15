@@ -1,0 +1,80 @@
+name: verify
+
+# The repository's own verification commands, run where nobody can forget them.
+#
+# Every command here is one a human is told to run before pushing (see
+# AGENTS.md). That instruction was the only enforcement, and it failed twice:
+# `doctor` and all five `* list` commands raised TypeError for a stretch of
+# commits, because the suite never executed the CLI and nobody ran the check by
+# hand. A step that no one runs is not a gate.
+#
+# These are deliberately the same commands, not a CI-specific variant: if the
+# two drift, one of them is lying about what "verified" means.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          # The pinned interpreter comes from .python-version; do not let the
+          # runner's default float under the project.
+          python-version-file: .python-version
+
+      - name: Sync dependencies
+        run: uv sync --dev
+
+      - name: Lint
+        run: uv run ruff check src tests
+
+      - name: Unit and integration tests
+        run: uv run pytest
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Check the ACP runner parses
+        run: node --check ./docker/dsh-agent/acp-runner.mjs
+
+      - name: Check the Inspect wiring without a model
+        run: uv run inspect eval src/ai_native_evals/tasks/smoke.py@smoke --model mockllm/model
+
+      - name: Check the repository's wiring
+        run: uv run ai-native-evals doctor
+
+      - name: Check nothing forbidden is tracked
+        run: pwsh -File tools/check-git-hygiene.ps1
+
+  console:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Frontend tests
+        run: pnpm test
+
+      - name: Build the Console
+        run: pnpm build
