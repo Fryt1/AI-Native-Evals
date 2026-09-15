@@ -103,12 +103,19 @@ def test_timeout_is_unknown_not_absent(monkeypatch) -> None:
     assert "timed out" in (status.error or "")
 
 
-def test_missing_wsl_is_unknown_not_absent(monkeypatch) -> None:
-    _fake_run(monkeypatch, FileNotFoundError("wsl.exe"))
+def test_a_missing_docker_binary_is_unknown_not_absent(monkeypatch) -> None:
+    """The whole class of "the client could not be started" is unknown.
+
+    Named for the platform seam rather than for `wsl.exe`: on Windows the
+    missing binary is `wsl.exe`, and elsewhere it is `docker`, but the verdict
+    under test -- unknown, never absent -- must not depend on which.
+    """
+    _fake_run(monkeypatch, FileNotFoundError("docker"))
 
     status = inspect_image("ai-native-codex-agent:local")
 
     assert status.present is None
+    assert status.error
 
 
 def test_only_a_definite_absence_is_returned_as_missing(monkeypatch) -> None:
