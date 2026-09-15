@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from ai_native_evals.evaluation import runner
+from ai_native_evals.evaluation import builtin, runner
 from ai_native_evals.evaluation.contracts import CheckResult
 from ai_native_evals.runs.agent_sandbox import EvaluatorAgentResult
 
@@ -169,7 +169,11 @@ def test_artifact_locator_maps_agent_path_and_script_uses_it(
             output_path=None,
         )
 
-    monkeypatch.setattr(runner, "run_evaluator_agent", fake_agent)
+    # Patched where the evaluator looks it up, not where it used to live: the
+    # built-in implementations moved out of `runner`, and a stub set on the old
+    # module is silently ignored -- which makes the test pass against the real
+    # container runner instead of the fake.
+    monkeypatch.setattr(builtin, "run_evaluator_agent", fake_agent)
     report = runner.evaluate_run(run_dir)
 
     assert report["decision"] == "pass"
@@ -501,7 +505,7 @@ def test_failed_required_judge_fails_the_run_without_a_threshold(tmp_path: Path)
         json.dumps({"status": "fail", "score": 0.9, "rationale": "rubric row failed"}),
         encoding="utf-8",
     )
-    _stub_evaluator_agent(runner, trace, last)
+    _stub_evaluator_agent(builtin, trace, last)
 
     report = runner.evaluate_run(run_dir)
 
@@ -512,7 +516,13 @@ def test_failed_required_judge_fails_the_run_without_a_threshold(tmp_path: Path)
 
 
 def _stub_evaluator_agent(target, trace: Path, last: Path) -> None:  # type: ignore[no-untyped-def]
-    """Point the evaluator Agent at a canned last message."""
+    """Point the evaluator Agent at a canned last message.
+
+    ``target`` is the module the built-in evaluators resolve the name from --
+    currently ``builtin``. It moved out of ``runner``, and a stub left on the old
+    module is not an error: the real runner would then start a container and the
+    assertions would be about something else entirely.
+    """
 
     def fake(*args, **kwargs):  # type: ignore[no-untyped-def]
         return EvaluatorAgentResult(
@@ -571,7 +581,7 @@ def test_ambiguous_locator_is_undetermined_not_a_failure(tmp_path: Path) -> None
         ),
         encoding="utf-8",
     )
-    _stub_evaluator_agent(runner, trace, last)
+    _stub_evaluator_agent(builtin, trace, last)
 
     report = runner.evaluate_run(run_dir)
 
@@ -606,7 +616,7 @@ def test_locator_not_found_is_still_a_failure(tmp_path: Path) -> None:
         json.dumps({"status": "not_found", "selected_artifact": None, "candidates": []}),
         encoding="utf-8",
     )
-    _stub_evaluator_agent(runner, trace, last)
+    _stub_evaluator_agent(builtin, trace, last)
 
     report = runner.evaluate_run(run_dir)
 

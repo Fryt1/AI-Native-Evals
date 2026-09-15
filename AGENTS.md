@@ -14,7 +14,7 @@ This repository is an evaluation suite built on the external `inspect-ai` packag
 - `src/ai_native_evals/adapters/` owns Codex/DSH protocol translation and normalized Agent events.
 - `src/ai_native_evals/resources/` owns Task-declared resource providers and snapshots.
 - `src/ai_native_evals/solvers/` owns Inspect Solver adapters; `agent_solver` must remain Agent-agnostic.
-- `src/ai_native_evals/evaluation/` owns TestPlan execution and reusable Evaluator implementations.
+- `src/ai_native_evals/evaluation/` owns TestPlan execution and reusable Evaluator implementations. Inside it: `runner.py` is the engine (check ordering, dependency blocking, aggregation), `builtin.py` holds the built-in evaluator implementations, and `support.py` holds what both need. Adding a check means editing `builtin.py`, never the engine.
 - `src/ai_native_evals/scorers/` owns Inspect/domain scoring adapters, not task acceptance data.
 - `src/ai_native_evals/runs/` owns per-run Workspace, Docker lifecycle, and evaluator sandboxes.
 - `AI-Native-Game-Engine` is the source of truth for WorkflowPlan, Stage, Checklist and Evidence *shape*. It is **not** the source of truth for whether a task was completed: its `StageAcceptanceEvaluator` grades the Agent against a checklist the Agent itself authored, so a Stage `pass` only proves internal consistency. Task-level verdicts belong to this repository (see the Acceptance boundary section).
