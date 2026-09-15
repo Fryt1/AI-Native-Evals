@@ -93,6 +93,12 @@ node --check .\docker\dsh-agent\acp-runner.mjs
 uv run inspect eval src/ai_native_evals/tasks/smoke.py@smoke --model mockllm/model
 pwsh -File tools/check-git-hygiene.ps1
 ```
+
+`uv run inspect` is the console script; `python -m inspect_ai` is the equivalent
+module form. Do not write `python -m inspect` — that resolves to the standard
+library's `inspect.py`, which answers with its own `usage: inspect.py [-d object]`
+and never reaches the framework.
+
 ## Eval Console rules
 
 - `src/ai_native_evals_console/` is a projection-first API boundary: reads are the default, and every state-changing endpoint is an explicit action rather than a side effect of a read. The full list is in `docs/EVAL_CONSOLE_SPEC.md` §25.1; add to it when you add one. Evaluation modules must not import it (`tests/test_console_api.py` walks every owned module and enforces this); the top-level CLI is the only exception, dispatching the optional console command.
