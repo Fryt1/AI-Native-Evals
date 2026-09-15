@@ -160,6 +160,122 @@ def test_preflight_still_owns_the_machine_facts() -> None:
     assert any(name.startswith("wsl") for name in names), names
 
 
+def test_doctor_reports_the_inspect_ai_wiring_with_evidence(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The framework check must report what it actually read.
+
+    It used to be `{"ok": True}` -- a constant. A check that cannot fail is not a
+    check, so a suite that drifted off its pinned framework, or whose entry point
+    stopped resolving, would still have been told the repository was wired.
+    """
+    _code, out = _run(capsys, "doctor")
+
+    check = json.loads(out)["checks"]["inspect_ai"]
+    assert check["ok"] is True
+    assert check["installed"]
+    # The entry point is how `inspect eval` finds the tasks; asserting it by name
+    # is what makes this a wiring check rather than a version read.
+    assert "ai_native_evals" in check["entry_points"]
+
+
+def test_the_inspect_ai_check_fails_when_the_version_drifts(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A check that cannot fail verifies nothing, so this pins that it can.
+
+    AGENTS.md requires the framework to stay pinned and to be upgraded
+    deliberately, so an installed version that disagrees with the pin is a
+    repository fault, not a host quirk.
+    """
+    import importlib.metadata as metadata
+
+    # A manifest is required for there to be a pin to disagree with; the
+    # synthetic repository has none by default (see the no-manifest test below).
+    (repo / "pyproject.toml").write_text(
+        '[project]\nname = "x"\ndependencies = ["inspect-ai==0.0.1"]\n', encoding="utf-8"
+    )
+    real = metadata.version
+    monkeypatch.setattr(
+        metadata, "version", lambda name: "9.9.9" if name == "inspect-ai" else real(name)
+    )
+
+    check = cli._check_inspect_ai(repo)
+
+    assert check["ok"] is False
+    assert "does not match the pin" in check["error"]
+
+
+def test_the_inspect_ai_check_fails_when_the_entry_point_is_gone(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without the entry point every documented `inspect eval` command fails."""
+    import importlib.metadata as metadata
+
+    # A pin is present so the check reaches the entry-point stage rather than
+    # returning early for a different reason.
+    (repo / "pyproject.toml").write_text(
+        '[project]\nname = "x"\ndependencies = ["inspect-ai==0.3.263"]\n', encoding="utf-8"
+    )
+
+    class _None:
+        def __iter__(self):  # type: ignore[no-untyped-def]
+            return iter(())
+
+    monkeypatch.setattr(metadata, "entry_points", lambda **_kwargs: _None())
+
+    check = cli._check_inspect_ai(repo)
+
+    assert check["ok"] is False
+    assert check["entry_points"] == []
+    assert "entry point" in check["error"]
+
+
+def test_the_inspect_ai_check_reports_a_missing_framework(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import importlib.metadata as metadata
+
+    def missing(name: str) -> str:
+        raise metadata.PackageNotFoundError(name)
+
+    monkeypatch.setattr(metadata, "version", missing)
+
+    check = cli._check_inspect_ai(repo)
+
+    assert check["ok"] is False
+    assert "not installed" in check["error"]
+
+
+def test_a_repository_without_a_manifest_has_no_pin_to_compare(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A tree with no `pyproject.toml` must not be reported as broken wiring.
+
+    The distinction is `preflight`'s: a question that could not be asked is not
+    an answer of "broken". The synthetic repository the CLI tests drive has no
+    manifest, and neither would a checkout of just the tasks.
+    """
+    check = cli._check_inspect_ai(tmp_path)
+
+    assert check["ok"] is True, check
+    assert check["declared"] is None
+    assert check["installed"]
+
+
+def test_a_manifest_that_pins_nothing_is_a_finding(tmp_path: Path) -> None:
+    """Present but unpinned is the state AGENTS.md forbids, and it is knowable."""
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "x"\ndependencies = ["PyYAML>=6.0"]\n', encoding="utf-8"
+    )
+
+    check = cli._check_inspect_ai(tmp_path)
+
+    assert check["ok"] is False
+    assert check["declared"] is None
+    assert "no inspect-ai requirement" in check["error"]
+
+
 def test_profile_roots_follow_the_configuration(
     repo: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

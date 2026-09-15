@@ -856,12 +856,101 @@ def _doctor(_args: argparse.Namespace) -> int:
         models = _profile_catalog(repo_root, "models")
         checks["agents"] = {"ok": bool(agents), "ids": sorted(agents)}
         checks["models"] = {"ok": bool(models), "ids": sorted(models)}
-        checks["inspect_ai"] = {"ok": True}
+        checks["inspect_ai"] = _check_inspect_ai(repo_root)
     except (EvalConfigError, OSError, ValueError) as exc:
         checks["error"] = str(exc)
     ok = all(value.get("ok", False) for value in checks.values() if isinstance(value, dict))
     print(json.dumps({"ok": ok, "checks": checks}, ensure_ascii=False, indent=2))
     return 0 if ok else 1
+
+
+def _check_inspect_ai(repo_root: Path) -> dict[str, object]:
+    """Is the pinned Inspect AI framework the one installed *and* still wired?
+
+    This reported `{"ok": True}` unconditionally: a constant, not a check. It
+    could not fail, so it verified nothing -- a suite that drifted off its pinned
+    framework, or whose entry point stopped resolving, would still have been told
+    the repository was correctly wired.
+
+    Two repository facts are worth asserting, and both are about wiring rather
+    than about this machine:
+
+    * the `inspect_ai` entry point this package registers still loads. That is
+      how `inspect eval` discovers the tasks, so if it stops resolving every
+      documented command fails while the suite's own tests still pass. This is
+      the hard requirement.
+    * the installed version matches the pin in `pyproject.toml`. AGENTS.md
+      requires the framework to stay pinned and to be upgraded deliberately, so
+      a mismatch is a repository fact.
+
+    Which checks apply depends on what can be read. A repository with no
+    `pyproject.toml` -- a synthetic tree driven by the CLI tests, or a checkout
+    of just the tasks -- has no pin to compare against, so the pin is reported as
+    unknown rather than treated as a fault. The same distinction `preflight`
+    draws between `missing` and `unknown`: a question that could not be asked is
+    not an answer of "broken".
+    """
+    checks: dict[str, object] = {"ok": False}
+
+    declared = ""
+    manifest_path = repo_root / "pyproject.toml"
+    if manifest_path.is_file():
+        try:
+            import tomllib
+
+            with manifest_path.open("rb") as handle:
+                manifest = tomllib.load(handle)
+            for requirement in manifest.get("project", {}).get("dependencies", []):
+                text = str(requirement)
+                if text.replace("_", "-").startswith("inspect-ai"):
+                    declared = text
+                    break
+        except (OSError, ValueError, KeyError) as exc:
+            # Reported rather than raised: `doctor` must stay reportable.
+            return {"ok": False, "error": f"cannot read the Inspect AI pin: {exc}"}
+
+    checks["declared"] = declared or None
+
+    try:
+        from importlib.metadata import PackageNotFoundError, version
+
+        installed = version("inspect-ai")
+    except PackageNotFoundError:
+        checks["error"] = "inspect-ai is not installed"
+        return checks
+    except (ValueError, OSError) as exc:
+        checks["error"] = f"cannot read the installed Inspect AI version: {exc}"
+        return checks
+
+    checks["installed"] = installed
+
+    if manifest_path.is_file() and not declared:
+        # The manifest is present and pins nothing: that is the unpinned state
+        # AGENTS.md forbids, and it is knowable, so it is a finding.
+        checks["error"] = "pyproject.toml declares no inspect-ai requirement"
+        return checks
+
+    # Compare against the pin's version, tolerating an operator/extras spec.
+    pinned = declared.split("==", 1)[1].split(";", 1)[0].strip() if "==" in declared else ""
+    if pinned and pinned != installed:
+        checks["error"] = f"installed {installed} does not match the pin {pinned}"
+        return checks
+
+    try:
+        from importlib.metadata import entry_points
+
+        names = sorted(entry.name for entry in entry_points(group="inspect_ai"))
+    except (ValueError, OSError) as exc:
+        checks["error"] = f"cannot read the inspect_ai entry points: {exc}"
+        return checks
+
+    checks["entry_points"] = names
+    if "ai_native_evals" not in names:
+        checks["error"] = "this package registers no inspect_ai entry point"
+        return checks
+
+    checks["ok"] = True
+    return checks
 
 
 def _preflight(args: argparse.Namespace) -> int:
